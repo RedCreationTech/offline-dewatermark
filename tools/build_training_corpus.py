@@ -424,7 +424,12 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--pdf-only',action='store_true');args=parser.parse_args()
     FONT.parent.mkdir(parents=True,exist_ok=True)
     if not FONT.exists():
-        shutil.copy2(os.environ['WM_CORPUS_FONT'],FONT)
+        source_font = os.environ.get('WM_CORPUS_FONT')
+        if not source_font:
+            raise FileNotFoundError(
+                f'缺少语料字体：{FONT}；请放置原语料字体，或设置 WM_CORPUS_FONT 指向该字体文件。'
+                '为保持语料可复现，不自动替换为其他字体。')
+        shutil.copy2(Path(source_font).expanduser(), FONT)
     if not (DEST/'licenses/NotoSansCJK-OFL.txt').exists():raise ValueError('Font license notice must accompany the font')
     if args.pdf_only:
         bases=json.loads((DEST/'bases/manifest.json').read_text())

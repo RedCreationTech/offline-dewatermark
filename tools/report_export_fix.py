@@ -20,6 +20,10 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run',type=Path,default=ROOT/'out/user_optimization/after')
     args=parser.parse_args();run=args.run.resolve();out=run.parent
+    font_path = os.environ.get('WM_REPORT_FONT')
+    if not font_path:
+        raise ValueError('请设置 WM_REPORT_FONT 指向中文字体文件，再生成本地对照报告。')
+    font=ImageFont.truetype(str(Path(font_path).expanduser()),22)
     rows=json.loads((run/'metrics.json').read_text())
     assert len(rows)==16 and all('error' not in r for r in rows.values()),'Full re-run required'
     groups=defaultdict(list)
@@ -44,7 +48,6 @@ def main():
                          needs_review=len(values),quality_evaluated=0,success_rate=None),pages=pages)
         (folder/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2,allow_nan=False))
         (folder/'queue.json').write_text(json.dumps(queue,ensure_ascii=False,indent=2))
-    font=ImageFont.truetype(os.environ['WM_REPORT_FONT'],22)
     assets=out/'对照图';assets.mkdir(exist_ok=True)
     def comparison(stem,r):
         paths=[Path(r['source_path']),Path(r['exported_path']),run/(stem+'.png')]

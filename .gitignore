@@ -7,17 +7,21 @@ out/
 .qoder/
 # 投标策略与需求分析，含竞标判断，只留本地
 docs/*
-# 长期维护的项目文档，单独允许版本管理
+# 仅保留通用架构、长期流程和仓库范围说明；报告、素材、历史记录只留本地
 !docs/knowme.md
 !docs/去水印处理流程图.md
-!docs/单图去水印流程演示_20261028.html
-!docs/代码与工具用途说明.html
-!docs/历史开发记录_20261029.md
-!docs/项目现状与后续开发说明_历史20261027.html
-!docs/数据集清单与清理_历史20261026.html
+!docs/仓库内容与本地资料说明.md
+
+# 内部任务草案、个人讲解图和外部修图助手，只留本地
+/下一步优化任务.md
+/visualizations/
+/tools/kimi_image_*
+/tests/test_kimi_image_tools.py
 # 根目录调试图片与 macOS 元数据，禁止入库
 /*.png
 /*.jpg
+/*.jpeg
+/*.webp
 .DS_Store
 
 # 投标方案材料（方案内容、演示、证据）与投标工具，只留本地，不入库
@@ -33,3 +37,22 @@ models/
 
 # 本机观察基线指针；封存证据在 out/，不把本机路径写入跨机配置
 .regression-control/
+
+# 个人编辑器、Agent 配置与本地凭据；示例配置可入库
+.codex/
+.claude/
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# 测试与构建缓存
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
