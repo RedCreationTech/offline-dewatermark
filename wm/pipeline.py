@@ -40,11 +40,41 @@ def extract_watermark(mask: MaskLayer) -> np.ndarray:
     return rgba
 
 
+def _gate_block_reason(mask: masks.MaskLayer, thr: Thresholds) -> str | None:
+    """Pre-repair evidence gate. Returns a block reason or None.
+
+    Every rule here enforces an intent that already exists in the codebase but
+    was only evaluated *after* repair (verdict.confidence<0.12, lama.py's
+    footprint>25% refusal): flagged pages still received the modified image.
+    Blocking before repair makes "needs manual review" actually mean the
+    output is the untouched input.
+    """
+    selection = mask.binary(thr.mask_alpha_min)
+    n = int((selection > 0).sum())
+    npix = selection.size
+    if n == 0:
+        return "empty_selection"
+    if (n < 64 and mask.confidence < 0.5) or (n < 256 and n / npix < 1e-5):
+        return "negligible_selection"
+    if mask.confidence < 0.12:
+        return "low_confidence"
+    if mask.footprint is not None and float(mask.footprint.mean()) > 0.25:
+        return "repaint_too_broad"
+    return None
+
+
 def _process_one(page: PageImage, mask: MaskLayer, thr: Thresholds,
                  gt: GroundTruth | None = None, mask_ms: int = 0) -> PageResult:
     """Run repair + verdict on a single page. Shared by batch and streaming paths."""
     local_t0 = time.perf_counter()
-    output, used = repair.repair(page.image, mask, thr)
+    block = _gate_block_reason(mask, thr)
+    if block is None:
+        output, used = repair.repair(page.image, mask, thr)
+    else:
+        # The gate says this page must not be touched: deliver the input
+        # byte-identical and flag it for manual review instead of repairing
+        # first and labelling afterwards.
+        output, used = page.image.copy(), []
     entry = gt.get(page.key) if gt else None
     clean_ref, alpha_ref, veil_ref = entry if entry else (None, None, None)
     report = verdict_mod.build_verdict(
@@ -55,6 +85,9 @@ def _process_one(page: PageImage, mask: MaskLayer, thr: Thresholds,
         thr=thr, clean_reference=clean_ref, alpha_reference=alpha_ref,
         veil_reference=veil_ref,
     )
+    if block is not None and verdict_mod.FailureCode.NEEDS_MANUAL_MASK not in report.failures:
+        report.failures.append(verdict_mod.FailureCode.NEEDS_MANUAL_MASK)
+    report.conditions["gate_blocked"] = block is not None
     report.page_key = page.key
     return PageResult(
         source=page,

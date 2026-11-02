@@ -23,6 +23,11 @@ import cv2
 import numpy as np
 
 _MAX_CACHE = 8
+# Detection runs on a capped-resolution copy (text lines remain large at this
+# scale, so boxes are found the same way); recognition crops are taken from the
+# ORIGINAL image at the scaled-back boxes, so per-line reading quality is
+# unchanged. Box coordinates are always returned in original image space.
+_DET_MAX_SIDE = 1600
 
 _lock = threading.Lock()
 _engine: Any = None
@@ -43,19 +48,57 @@ def read_lines(img: np.ndarray) -> list | None:
     engine = _get_engine()
     if engine is None:
         return None
-    result, _ = engine(cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if img.ndim == 3 else img)
+    h, w = img.shape[:2]
+    full_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if img.ndim == 3 else img
+    use_limit_ratio = (engine.width_height_ratio != -1
+                       and w / h > engine.width_height_ratio)
+    if not engine.use_text_det or h <= engine.min_height or use_limit_ratio:
+        # RapidOCR's own no-detection path: the whole page is one crop.
+        dt_boxes, img_crop_list = engine.get_boxes_img_without_det(full_bgr, h, w)
+        if dt_boxes is None or len(dt_boxes) < 1:
+            _store(key, [])
+            return []
+    else:
+        scale = min(1.0, _DET_MAX_SIDE / float(max(h, w)))
+        work = img
+        if scale < 1.0:
+            work = cv2.resize(img, (max(1, round(w * scale)), max(1, round(h * scale))),
+                              interpolation=cv2.INTER_AREA)
+        bgr = cv2.cvtColor(work, cv2.COLOR_RGB2BGR) if work.ndim == 3 else work
+        dt_boxes, _ = engine.text_detector(bgr)
+        if dt_boxes is None or len(dt_boxes) < 1:
+            _store(key, [])
+            return []
+        dt_boxes = engine.sorted_boxes(dt_boxes)
+        if scale < 1.0:
+            mapped = []
+            for box in dt_boxes:
+                b = np.asarray(box, np.float32) / scale
+                b[:, 0] = np.clip(b[:, 0], 0, w - 1)
+                b[:, 1] = np.clip(b[:, 1], 0, h - 1)
+                mapped.append(b)
+            dt_boxes = mapped
+        img_crop_list = engine.get_crop_img_list(full_bgr, dt_boxes)
+    if engine.use_angle_cls:
+        img_crop_list, _, _ = engine.text_cls(img_crop_list)
+    rec_res, _ = engine.text_recognizer(img_crop_list)
+    filter_boxes, filter_rec_res = engine.filter_boxes_rec_by_score(dt_boxes, rec_res)
     lines = []
-    for item in result or []:
+    for box, rec in zip(filter_boxes, filter_rec_res):
         try:
-            box, text, confidence = np.asarray(item[0], np.float32), str(item[1]), float(item[2])
+            box, text, confidence = np.asarray(box, np.float32), str(rec[0]), float(rec[1])
         except (TypeError, ValueError, IndexError):
             continue
         if box.shape == (4, 2) and np.isfinite(box).all() and np.isfinite(confidence):
             lines.append((box, text, confidence))
+    _store(key, lines)
+    return lines
+
+
+def _store(key: str, lines: list) -> None:
     if len(_line_cache) >= _MAX_CACHE:
         _line_cache.pop(next(iter(_line_cache)))
     _line_cache[key] = lines
-    return lines
 
 
 def _get_engine():

@@ -11,9 +11,15 @@ import numpy as np
 from .contract import MaskLayer, MaskSource
 
 
-def _regress(background, observed, period, iterations=0):
+def _regress(background, observed, period, iterations=0, indices=None):
     """Robust affine fit for each lattice phase, with balanced spatial samples."""
-    yy, xx = np.indices(background.shape)
+    # Index arrays are caller-provided when the same shape is regressed many
+    # times in a row (the period scan); they are deterministic, so sharing them
+    # does not change any result.
+    if indices is None:
+        yy, xx = np.indices(background.shape)
+    else:
+        yy, xx = indices
     phase = (yy % period * period + xx % period).ravel()
     x, y = background.ravel().astype(float), observed.ravel().astype(float)
     if x.size > 200_000:
@@ -43,8 +49,9 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     if float(background.std()) < 18:
         return None
     candidates = []
+    indices = np.indices(crop.shape)
     for period in range(7, min(65, min(crop.shape)//5)):
-        slope, _ = _regress(background, crop-background, period)
+        slope, _ = _regress(background, crop-background, period, indices=indices)
         candidates.append((-float(np.percentile(slope, 1)), period))
     if not candidates:
         return None
@@ -53,7 +60,7 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
         return None
     # Multiples of a real period have the same response. Prefer its fundamental.
     period = min(p for score, p in candidates if score >= .9*best)
-    slope, _ = _regress(background, crop-background, period, 3)
+    slope, _ = _regress(background, crop-background, period, 3, indices=indices)
     support = slope < -.18
     if not .005 < support.mean() < .15:
         return None

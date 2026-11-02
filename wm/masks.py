@@ -44,9 +44,28 @@ def paper_background_fraction(img: np.ndarray, paper: np.ndarray | None = None) 
     its histogram spikes can turn unrelated texture into a broad repair mask.
     Photo-specific detectors run before this guard; if none has evidence, do
     not let document heuristics invent a mask.
+
+    Pure function of the image: memoized because the cascade queries it several
+    times per page and each pass is a full-resolution morphology.
     """
     if paper is None:
-        paper = paper_level(img)
+        import hashlib
+        key = hashlib.sha1(np.ascontiguousarray(img).tobytes()).hexdigest()
+        hit = _paper_fraction_cache.get(key)
+        if hit is not None:
+            return hit
+        result = _paper_background_fraction(img, paper_level(img))
+        if len(_paper_fraction_cache) >= 8:
+            _paper_fraction_cache.pop(next(iter(_paper_fraction_cache)))
+        _paper_fraction_cache[key] = result
+        return result
+    return _paper_background_fraction(img, paper)
+
+
+_paper_fraction_cache: dict[str, float] = {}
+
+
+def _paper_background_fraction(img: np.ndarray, paper: np.ndarray) -> float:
     fimg = img.astype(np.float32)
     gray = fimg.mean(2)
     level = float(np.median(paper))
