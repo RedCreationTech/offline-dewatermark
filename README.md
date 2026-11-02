@@ -25,7 +25,7 @@ cd offline-dewatermark
 
 日常使用已有本地依赖和模型；严格离线部署须提前准备资源和对应平台的 Python 依赖。图片输入与评分参考分开，干净图、alpha 和标注不能用于决定当前单图选区或处理结果。
 
-数据与模型仍由原仓库的 [2026年10月27日资源包](https://github.com/jrh010806/offline-dewatermark-ai/releases/tag/resources-2026-10-27) 提供；新仓库只有资源标签，未复制 Release 说明与附件。旧包属于当日快照，不能直接视为当前清单，现有工作目录不要被旧包覆盖。
+数据与模型从本仓库的 [2026年10月27日资源包](https://github.com/RedCreationTech/offline-dewatermark/releases/tag/resources-2026-10-27) 下载。2026-11-02 已复制原 Release 的六个附件，文件名、大小与 SHA256 保持一致，原仓库 Release 继续保留。资源仍属于 2026-10-27 快照，不能直接视为当前清单，现有工作目录不要被旧包覆盖。
 
 ## 数据范围
 

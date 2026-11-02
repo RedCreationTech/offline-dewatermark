@@ -1,6 +1,6 @@
 # 项目认知文档（knowme）
 
-> 版本：V1.3（2026-11-02）
+> 版本：V1.4（2026-11-02）
 > 依据：对截至 2026-10-30 最新提交源码的完整走读（`wm/` 44 个模块、约 9.4k 行，`tools/` 97 个脚本，`tests/` 40 个测试文件）
 > 读者：刚拿到代码的新手。读完本文应能回答四个问题：**项目架构是什么样、用了什么技术、核心逻辑怎么跑、如何编译运行**。
 > 关系：本文是项目认知文档的唯一当前入口；2026-10-26 的根目录初版 C4 说明已作为重复历史副本删除。
@@ -249,8 +249,8 @@ flowchart TB
 
 ```bash
 # 1. 拿代码
-git clone https://github.com/jrh010806/offline-dewatermark-ai.git
-cd offline-dewatermark-ai
+git clone https://github.com/RedCreationTech/offline-dewatermark.git
+cd offline-dewatermark
 
 # 2. 放资源（关键，新手最容易错）：从 GitHub Release 下载三个 ZIP
 #    data_bundle_part1_of2.zip + data_bundle_part2_of2.zip + model_bundle.zip
@@ -347,3 +347,7 @@ offline-dewatermark-ai/
 ## 2026-11-02 仓库资料范围核对
 
 按 [仓库内容与本地资料说明](仓库内容与本地资料说明.md) 将本地报告、样本展示素材、内部计划和个人辅助工具取消追踪，随后继续清理新仓库全部分支和标签历史；原件仍在本机，原仓库与 Release 保留。本文引用的本地材料以路径标注，Git 克隆不提供这些材料。算法、默认入口与质量结论未改变，新的提交编号和标签指向不用于改写历史图像验收结论。
+
+## 2026-11-02 资源 Release 复制
+
+数据、模型和三个配套说明／校验文件已复制至 [本仓库资源 Release](https://github.com/RedCreationTech/offline-dewatermark/releases/tag/resources-2026-10-27)，原 Release 保留。六个附件仍是原始快照，校验值不变；原始清单中的旧提交号由资源说明解释其映射，不重新打包、不恢复退役样本。详细下载与校验见 [资源放置说明](../资源放置说明.md)。
