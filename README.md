@@ -67,10 +67,14 @@ cd offline-dewatermark
 
 本地报告索引为 `out/水印验证报告总目录.html`，只有具备相应本地产物时才可查看。报告生成器仍保留在 `tools/`，生成内容受 `.gitignore` 管理；无需为了查看或开发应用，把私人报告重新加入 Git。
 
+面向用户的报告版式约定：正文全平铺展示，不用折叠列表藏内容；专业名词和代码段必须配解释，术语解释只通过词旁 ❓ 浮层提供（点击弹出，再点一次、点空白处或按 Esc 收起），不另设重复词表。约束细则见 `AGENTS.md` 第 8 节。
+
 ```bash
 .venv/bin/python tools/organize_project_docs.py         # 从本地清单生成说明
 .venv/bin/python tools/organize_project_docs.py --check # 核对本地生成内容与链接
 .venv/bin/python tools/build_report_index.py            # 更新本地报告索引
 ```
+
+HTML 报告约定（2026-11-02 起）：面向用户的报告图片一律 base64 内嵌，单个 HTML 发出即可完整查看；所有新建报告都要能通过 `out/水印验证报告总目录.html` 分类跳转到达；总目录与报告之间只用相对路径，交付前压缩整个目录实际解压验证。详见[代码与工具用途说明](docs/代码与工具用途说明.html)中的“HTML 报告编写与分享约定”。
 
 这些工具依赖本地数据或封存记录；仅克隆仓库不保证能重新生成全部历史报告。通用语料工具缺字体时需设置 `WM_CORPUS_FONT`，历史导出报告工具使用 `WM_REPORT_FONT`，不依赖个人主目录。

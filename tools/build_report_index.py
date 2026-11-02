@@ -117,10 +117,10 @@ def category(value):
         return 'baseline'
     if any(k in value for k in ('tender-', '方案材料｜', '答辩材料｜', 'proposal/output')):
         return 'material'
-    if any(k in value for k in ('项目防退化控制', '分层防退化检查', '项目整理', '样本移除记录', 'project-control', '空间清理审计')):
+    if any(k in value for k in ('项目防退化控制', '分层防退化检查', '项目整理', '样本移除记录', 'project-control', '空间清理审计', '验收报告')):
         return 'control'
     if any(k in value for k in ('失败案例', 'bottleneck', 'failure-cases', '瓶颈判断', '漏检原因分析',
-                                'batch_diagnosis', 'report_before.html', 'export_selection_diagnosis')):
+                                'batch_diagnosis', 'report_before.html', 'export_selection_diagnosis', '分步体检')):
         return 'diagnosis'
     if any(k in value for k in ('历史错误', '旧版错误', 'recall_priority', '历史示意版', '早期分析',
                                 'center_refinement', 'new_samples', 'app_quick20', 'small_dataset_rerun',
@@ -161,7 +161,10 @@ def original_cards_legacy(source):
 
 
 def baseline_card():
-    pointer = json.loads((ROOT / '.regression-control/baseline.json').read_text())
+    pointer_path = ROOT / '.regression-control/baseline.json'
+    if not pointer_path.is_file():
+        return None, None  # 本机尚未建立观察基线，跳过基线卡片
+    pointer = json.loads(pointer_path.read_text())
     directory = Path(pointer['path'])
     run = json.loads((directory / '运行记录.json').read_text())
     complete = run.get('complete') and run.get('integrity_verified') and (directory / '封存校验.json').is_file()
@@ -212,7 +215,8 @@ def discover(cards, baseline):
         if name == 'review.html' and any(k in str(path) for k in ('recall_priority', 'stroke_selection')):
             continue  # Batch drilldowns are reachable from their parent report.
         parser = Text()
-        parser.feed(path.read_text(errors='replace'))
+        raw = path.read_text(errors='replace')
+        parser.feed(raw)
         title = ''.join(parser.title).strip()
         if not title or title == '水印验证报告总目录':
             continue
@@ -223,8 +227,11 @@ def discover(cards, baseline):
         if group == 'history' and title == '最小集回归结果':
             title = '历史固定回归｜' + path.parent.name
         identifier = 'report-' + hashlib.sha256(relative.encode()).hexdigest()[:12]
+        external_images = re.findall(r'''src\s*=\s*(["'])(?!data:|https?:)([^"']+)\1''', raw)
         description = ('仅验证工具链路，不作为去水印质量成绩。' if '自检' in relative
                        else '补充收录的已有报告。样本、参数、代码版本和结论以原报告为准，不能直接并入当前成绩。')
+        if external_images:
+            description += ' 本报告引用外部图片文件，单独发送该 HTML 可能不完整。'
         body = (f'<h2><a href="{href(path)}">{escape(title)}</a></h2><p>{description}</p>'
                 f'<p class="path">{escape(relative)}</p>')
         additions.append(card(identifier, group, body))
@@ -327,19 +334,25 @@ JS = '''
 
 def main():
     now = datetime.now(ZoneInfo('Asia/Shanghai'))
-    source = INDEX.read_text()
     folder = OUT / '报告目录整理' / now.strftime('%Y%m%d_%H%M%S_%f')
     folder.mkdir(parents=True, exist_ok=False)
-    shutil.copyfile(INDEX, folder / '总目录_分类前备份.html')
+    if INDEX.is_file():
+        source = INDEX.read_text()
+        shutil.copyfile(INDEX, folder / '总目录_分类前备份.html')
+    else:
+        source = ''  # 首次在本机生成总目录，从空分类起步
     curated = original_cards(source)
     baseline, directory = baseline_card()
-    report = directory / '项目防退化控制报告.html'
-    sealed_report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
+    sealed_report_hash = None
+    report = None
+    if directory is not None:
+        report = directory / '项目防退化控制报告.html'
+        sealed_report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
     # Current full observation supersedes the old wording, not the old files.
     for item in curated:
         if '当前默认基线｜两批14张' in item['body']:
             item['body'] = item['body'].replace('当前默认基线｜两批14张', '历史开发基线｜两批14张')
-    cards = [baseline] + [item for item in curated if item['id'] != baseline['id']]
+    cards = ([baseline] if baseline else []) + [item for item in curated if not baseline or item['id'] != baseline['id']]
     current_id = 'current-project-organization-20261029'
     current_body = ('<h2>' + '<a href="' + href(ROOT / 'docs/项目文档总览.html') + '">当前说明｜项目状态、数据与工具入口（2026-10-29）</a></h2>'
                     '<p>先看当前状态，再选择观察基线、实验或历史记录。数据数量从实际清单生成；本轮只整理入口和管理，不形成新的算法效果成绩。</p>'
@@ -362,7 +375,10 @@ def main():
     for item in cards:
         item['body'] = available_local_links(clean_document_links(item['body']))
     counts = Counter(item['category'] for item in cards)
-    tabs = ''.join(f'<button id="tab-{key}" type="button" role="tab" aria-controls="report-panel" aria-selected="{str(key == "baseline").lower()}" tabindex="{0 if key == "baseline" else -1}" data-category="{key}" data-title="{label}" data-description="{escape(description, quote=True)}">{label}<span class="count">{len(cards) if key == "all" else counts[key]}</span></button>' for key, (label, description) in CATEGORIES.items())
+    baseline_summary = '<span>历史完整观察基线：1,278 页次已记录</span>' if baseline else '<span>本机尚未建立观察基线</span>'
+    initial = 'baseline' if baseline else 'all'
+    js = JS.replace("let category = 'baseline';", f"let category = '{initial}';")
+    tabs = ''.join(f'<button id="tab-{key}" type="button" role="tab" aria-controls="report-panel" aria-selected="{str(key == initial).lower()}" tabindex="{0 if key == initial else -1}" data-category="{key}" data-title="{label}" data-description="{escape(description, quote=True)}">{label}<span class="count">{len(cards) if key == "all" else counts[key]}</span></button>' for key, (label, description) in CATEGORIES.items())
     body = []
     for item in cards:
         label = CATEGORIES[item['category']][0]
@@ -373,16 +389,16 @@ def main():
 <!-- report-timestamp:start -->
 <p class="timestamp" data-report-timestamp="updated">目录更新时间：<time datetime="{now.isoformat(timespec='seconds')}">{now.strftime('%Y-%m-%d %H:%M:%S')}</time> · 北京时间</p>
 <!-- report-timestamp:end -->
-<div class="summary"><span>{len(cards)} 个报告与材料入口</span><span>历史完整观察基线：1,278 页次已记录</span><span>记录完成 ≠ 当前代码验收通过</span></div><p><a href="{href(ROOT / 'docs/项目现状与后续开发说明.html')}">查看当前状态与清单问题</a> · <a href="{href(ROOT / 'docs/项目文档总览.html')}">查看文档用途</a></p></header>
+<div class="summary"><span>{len(cards)} 个报告与材料入口</span>{baseline_summary}<span>记录完成 ≠ 当前代码验收通过</span></div><p><a href="{href(ROOT / 'docs/项目现状与后续开发说明.html')}">查看当前状态与清单问题</a> · <a href="{href(ROOT / 'docs/项目文档总览.html')}">查看文档用途</a></p></header>
 <nav class="tabs" role="tablist" aria-label="报告分类">{tabs}</nav>
-<section id="report-panel" data-catalog-panel="true" role="tabpanel" aria-labelledby="tab-baseline"><div class="toolbar"><div><h2 id="category-heading">全部报告</h2><p id="category-description">按上方标签切换分类。</p><p id="result-count" role="status" aria-live="polite">共 {len(cards)} 个入口</p></div><div class="search"><label><span class="sr-label" hidden>搜索当前分类的报告</span><input id="report-search" type="search" aria-label="搜索当前分类的报告" placeholder="在当前分类搜索报告…"></label><button id="clear-search" type="button">清空</button></div></div>
+<section id="report-panel" data-catalog-panel="true" role="tabpanel" aria-labelledby="tab-{initial}"><div class="toolbar"><div><h2 id="category-heading">全部报告</h2><p id="category-description">按上方标签切换分类。</p><p id="result-count" role="status" aria-live="polite">共 {len(cards)} 个入口</p></div><div class="search"><label><span class="sr-label" hidden>搜索当前分类的报告</span><input id="report-search" type="search" aria-label="搜索当前分类的报告" placeholder="在当前分类搜索报告…"></label><button id="clear-search" type="button">清空</button></div></div>
 <div class="cards">{''.join(body)}</div><p id="empty-state" class="empty" hidden>当前分类没有匹配的报告。可清空搜索或切换“全部报告”。</p></section>
-<noscript><p>JavaScript 未启用，以下已展示全部报告；浏览器查找仍可使用。</p></noscript><footer>本页与报告均从本地文件打开，无需联网。点击标题查看完整报告；子批次、逐图输出和原始数据从对应主报告继续进入。目录分类不改变原始报告、实验结论或封存记录。</footer></main><script>{JS}</script></body></html>'''
+<noscript><p>JavaScript 未启用，以下已展示全部报告；浏览器查找仍可使用。</p></noscript><footer>本页与报告均从本地文件打开，无需联网。点击标题查看完整报告；子批次、逐图输出和原始数据从对应主报告继续进入。目录分类不改变原始报告、实验结论或封存记录。</footer></main><script>{js}</script></body></html>'''
     INDEX.write_text(page)
-    if hashlib.sha256(report.read_bytes()).hexdigest() != sealed_report_hash:
+    if sealed_report_hash is not None and hashlib.sha256(report.read_bytes()).hexdigest() != sealed_report_hash:
         raise RuntimeError('封存报告不应被目录整理修改')
     save = dict(updated_at=now.isoformat(), entries=len(cards), by_category=dict(counts),
-                baseline_report_unchanged=True, backup=str(folder / '总目录_分类前备份.html'),
+                baseline_report_unchanged=True, backup=str(folder / '总目录_分类前备份.html') if INDEX.is_file() else None,
                 preserved_original_entries=len(curated), added_entries=len(cards) - len(curated))
     (folder / '目录整理记录.json').write_text(json.dumps(save, ensure_ascii=False, indent=2))
     print(json.dumps(save, ensure_ascii=False, indent=2))

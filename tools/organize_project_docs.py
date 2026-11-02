@@ -175,6 +175,7 @@ def render(f, date):
     guide = page('代码与工具用途说明', [
         ('map', '目录分别做什么', table(['目录', '用途', '说明'], [(escape(a), escape(b), escape(d)) for a,b,d in directory_rows])),
         ('entry', '平时使用哪些入口', '<pre>./start.sh setup                 # 首次准备本地环境\n./start.sh gui                   # 打开桌面程序\n./start.sh check-data            # 校验固定数据，不运行模型\n./start.sh test --plan           # 预览实际修改需要的检查\n./start.sh test                  # 日常按影响检查\n./start.sh test-release          # 完整三模式对照\n.venv/bin/python tools/organize_project_docs.py  # 更新当前说明\n.venv/bin/python tools/organize_project_docs.py --check  # 只核对说明和链接\n.venv/bin/python tools/build_report_index.py    # 更新报告目录</pre><p>已有本机观察基线，日常不要重新执行 freeze-baseline 替换比较依据。需要完整发布证据时走原放行流程。</p>'),
+        ('html-rules', 'HTML 报告编写与分享约定', '<p>2026-11-02 起执行。目标是任何报告压缩打包发给别人、或只发送单个 HTML 文件，都能完整查看。</p><ul><li><strong>图片必须内嵌</strong>：新写或新改的面向用户 HTML 中，图片一律以 base64（<code>data:image/...</code>）嵌入，禁止引用外部相对路径图片；历史封存报告不强制追溯改造。</li><li><strong>必须进总目录</strong>：所有新建 HTML 报告都要能在 '+link('../out/水印验证报告总目录.html','报告总目录')+' 的分类入口中跳转到达。写完报告后执行 <code>.venv/bin/python tools/build_report_index.py</code> 重建总目录；分类为观察基线、项目管控、失败与诊断、算法实验、历史回归、方案材料，口径见工具内 <code>CATEGORIES</code>。</li><li><strong>压缩包可完整查看</strong>：总目录与报告之间只用相对路径链接；交付前把整个目录压缩一份实际解压验证，双击总目录能分类跳转、图片完整显示。</li><li><strong>链接写法</strong>：链接以真实扩展名结束，不加 <code>#锚点</code>、<code>?参数</code> 等尾巴；确需页内定位的锚点保留在扩展名之前。</li></ul><p>生成类工具（进度页、报告生成器等）输出 HTML 时须遵守同一约定，不能只手工改一次页面。</p>'),
         ('tools', '每个工具的用途', '<p>下面覆盖 tools/ 顶层脚本与展示资源。分类用于导航，专项脚本是否可运行仍取决于其输入、参数和本地资源；没有逐一重跑研究脚本。</p>'+table(['类别', '文件数'],[(escape(k),str(v)) for k,v in sorted(groups.items())])+table(['文件', '类别', '使用说明'],[(link('../tools/'+a,a),escape(b),escape(d)) for a,b,d in catalog])),
         ('backup', 'Git 和本机备份', '<p>程序、工程测试、通用维护脚本、README、架构和长期流程说明通过 Git 保存；当前生成的 HTML 说明与报告只留本机，不进入普通提交。</p><p><code>data/</code>、全部 <code>out/</code>、模型缓存及本机基线指针采用单独资源包或本机备份；2026-11-02 已从当前版本取消追踪本地报告和展示素材；本地原件保留；随后按用户要求清理了新仓库全部分支与标签历史，原仓库和 Release 不改动。<code>proposal/</code>、个人修图工具与配置、内部计划和临时图表不进入新版本。</p><p>换电脑时要另外保存：当前数据与来源、模型、完整封存基线及其资源、尚未入库的方案材料。可选修图配置可能包含密钥，保留在本机，不直接加入仓库。Git 精确状态见本轮整理记录。</p>')], date)
     data = page('数据集清单与清理', [
@@ -216,7 +217,7 @@ def render(f, date):
         ('历史迁移说明','../MIGRATION.md','早期跨机迁移说明','历史环境与旧数据入口供追溯，当前安装以资源放置说明为准。'),
         ('当前说明','knowme.md','项目认知文档（knowme）','当前架构、技术栈、核心逻辑与运行入口；唯一 knowme 版本。'),
         ('后续任务草案','../下一步优化任务.md','算法优化任务草案','后续研究计划，不代表已经实现或验收。'),
-        ('建设计划','独立验证集建设清单_20261030.html','独立验证集怎么建','高考卷式的独立数据建设计划：排除范围、12 场景清单、四条铁律；计划待确认，不是已完成的验证。'),
+        ('建设计划','独立验证集建设清单_20261030.html','独立验证集','已建成（2026-11-02）：排除范围、12 场景、四条铁律与 QA 证据；一次性基线后锁柜，看过即降级。'),
         ('环境与资源','../资源放置说明.md','当前资源放置说明','说明旧资源包与当前清单的差别，换电脑须单独保留后续产物。')]
     portal = page('项目文档总览', [
         ('start','从这里开始','<p class="note">了解现状先看“项目现状”；查看效果先看“基线效果总览”；改代码前看“代码与工具用途”。历史文件保留原位，分类标签说明它代表什么。</p>'),
@@ -237,6 +238,19 @@ def registry_and_readmes(f, date):
         item['bytes_note']='当前目录文件字节总和，包含说明和派生资料；不是独立样本量。'
         if item['id']=='regression_min': item.update(pages=c['fixed_pages'],retirement_profile='config/regression_retirements.json')
     registry['count_sources']={name:value for name,value in f['source_sha256'].items()}
+    # 独立验证集 v1：2026-11-02 建成，一次性基线后锁柜；存在不等于任何算法已通过泛化验证。
+    ind_root=ROOT/'data/watermark_independent_v1'
+    if (ind_root/'manifest.jsonl').exists():
+        ind_rows=[json.loads(x) for x in (ind_root/'manifest.jsonl').read_text().splitlines() if x.strip()]
+        registry['datasets'].append(dict(id='independent_v1',role='locked_validation',
+            path='data/watermark_independent_v1',label='独立验证集 v1（一次性查看后锁柜）',
+            count=len(ind_rows),unit='图片记录',
+            detail='60 正例＋6 负例，12 场景，精确 alpha；新底图/新模板/新文案；QA 通过与 v1 及开发图零重叠；基线一次性查看后锁柜，看过即降级',
+            lock='one_look_baseline_then_frozen',qa=str(ind_root/'qa/validation.json')))
+        registry['independent_set']=dict(status='built_frozen',records=len(ind_rows),
+            baseline_report='out/独立验证基线_20261102/report.html',
+            rule='任何据其调参的行为使该集降级为开发/回归用途，需另建独立集')
+    registry['registered_sets']=len(registry['datasets'])
     registry['independent_validation']=False
     registry['application_inventory']=dict(verified=f['inventory_error'] is None,
         registered_inputs=c['control_inputs'],registered_pages=c['control_pages'],
@@ -257,7 +271,8 @@ def registry_and_readmes(f, date):
 原始收件 manual_collections、base_photos、20250227.pdf 保留；应用测试输入、网站参照另存，不另算训练集。
 旧 real_samples、syn、公开40对及配套旧格式已退役；当前固定集已移除三张手写样本，原始来源和封存记录按用途保留。
 输入与评分答案分开。训练清单或检测框不是当前单图推理的输入。
-训练数据已准备不代表已经训练模型；目前没有独立泛化验证结论。
+训练数据已准备不代表已经训练模型。
+独立验证集 v1（2026-11-02 建成）：data/watermark_independent_v1，60 正例＋6 负例；与 v1 及开发图零重叠（QA 见集内 qa/validation.json）；一次性基线后锁柜，看过即降级；基线数字不代表当前算法已通过泛化验证。
 
 日常检查：./start.sh test --plan，然后 ./start.sh test。
 固定数据校验：./start.sh check-data。发布：./start.sh test-release。
