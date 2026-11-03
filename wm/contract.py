@@ -157,6 +157,10 @@ class MaskLayer:
     # Binary alpha selects strokes here; it is not measured physical opacity.
     shadow_reconstruction: np.ndarray | None = None
     shadow_evidence: dict[str, Any] | None = None
+    # Set when a stroke-completion enhancement was offered for this image but
+    # rejected by per-image validation: it could not explain enough of the
+    # base selection, so the base mask was kept (fallback, marked unresolved).
+    skip_reason: str | None = None
 
     def binary(self, threshold: float = Thresholds.mask_alpha_min) -> np.ndarray:
         if self.selection is not None:

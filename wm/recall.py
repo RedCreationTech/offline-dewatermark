@@ -13,6 +13,25 @@ import numpy as np
 from . import ocr, photo_observations
 from .contract import MaskLayer
 
+# Provisional floor (fitted on the fixed regression repeated-text styles;
+# see the 2026-11-02 inc11 diagnosis report). Below it the enhancement is
+# deemed failed for this image and the base mask is kept, marked unresolved.
+_BASE_EXPLAIN_MIN = 0.75
+
+
+def _explains_base(base, located, thr) -> bool:
+    """True when located accounts for most of the base selection.
+
+    Stroke completion must never discard base coverage it cannot explain.
+    A 9px tolerance absorbs antialias/registration drift between the two
+    selections; the ratio is |base inside tolerance(located)| / |base|.
+    """
+    located_sel = located.binary(thr.mask_alpha_min) > 0
+    if not located_sel.any():
+        return False
+    tolerance = cv2.dilate(located_sel.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+    return float((base & tolerance).sum() / base.sum()) >= _BASE_EXPLAIN_MIN
+
 
 def _lines(image, base):
     observations = photo_observations.observations(image, ocr.read_lines(image) or [])
@@ -130,7 +149,12 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         located = observed_text.repeated_photo(image, ocr.read_lines(image) or [],
                                                stroke_only=True, search_mask=base)
         if located is not None:
-            return located
+            # Whole-sale replacement is only allowed when the stroke result
+            # explains the base selection; otherwise keep the base mask and
+            # mark the enhancement skipped (per-image validation fallback).
+            if _explains_base(base, located, thr):
+                return located
+            return replace(mask, skip_reason='cannot_explain_base')
     lines = _lines(image, base)
     if not lines:
         return mask
