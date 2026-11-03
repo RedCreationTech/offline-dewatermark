@@ -42,11 +42,14 @@ def _inside_table(gray, box, paper):
     radius = max(24, int(height*16))
     x0, y0 = max(0, cx-radius), max(0, cy-radius)
     x1, y1 = min(gray.shape[1], cx+radius), min(gray.shape[0], cy+radius)
+    if x1 <= x0 or y1 <= y0:
+        return False
     ink = (gray[y0:y1, x0:x1] < paper-12).astype(np.uint8)
     length = max(20, int(height*3))
     horizontal = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, length), np.uint8))
     vertical = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((length, 1), np.uint8))
-    x, y = cx-x0, cy-y0
+    x = min(max(cx - x0, 0), x1 - x0 - 1)
+    y = min(max(cy - y0, 0), y1 - y0 - 1)
     # Require all four cell boundaries; a lone footer rule is not a table.
     return (horizontal[:y, x].any() and horizontal[y+1:, x].any()
             and vertical[y, :x].any() and vertical[y, x+1:].any())
