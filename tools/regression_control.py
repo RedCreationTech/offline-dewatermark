@@ -344,42 +344,12 @@ def verified_run(out):
 
 
 def write_report(out, run, old=None, gate=None):
-    from urllib.parse import quote
-    old_rows = {r['key']: r for r in (old or {}).get('records', [])}
-    checks = {r['key']: r for r in (gate or {}).get('cases', [])}
-    def link(path):
-        return quote(os.path.relpath(path, out), safe='/')
-    cards = []
-    for row in run['records']:
-        figures = []
-        before = old_rows.get(row['key'], {})
-        for item, filename, title in ((row, '原图预览.jpg', '原图（缩略）'),
-                (before, '选区预览.jpg', '基线选区'), (row, '选区预览.jpg', '本版选区'),
-                (before, '处理结果.png', '基线结果'), (row, '处理结果.png', '本版结果'),
-                (row, '漏选多选核对.jpg', '蓝色漏选／橙色多选（评分后标记）')):
-            p = item.get('files', {}).get(filename)
-            if p:
-                figures.append(f'<figure><a href="{link(p)}"><img loading="lazy" src="{link(p)}"></a><figcaption>{title}</figcaption></figure>')
-        values = {k: row.get(k) for k in ('status', 'recall', 'strong_recall', 'precision',
-                  'missed_pixels', 'false_positive_pixels', 'hole_selected_pixels', 'selected_pixels',
-                  'selected_fraction', 'background_mae', 'watermark_mae', 'changed_pixels',
-                  'outside_selection_changed_pixels', 'method', 'repair_mode', 'elapsed_ms', 'error')}
-        cards.append(f'<article><h2>{escape(row["key"])}</h2><p>{escape(str(checks.get(row["key"], {})))}</p>'
-                     '<div class="figs">' + ''.join(figures) + '</div><pre>' +
-                     escape(json.dumps(values, ensure_ascii=False, indent=2)) + '</pre></article>')
-    failed = sum(r['status'] != 'completed' for r in run['records'])
-    summary = (f'已记录 {len(run["records"])} / {len(run["expected_keys"])} 页次，运行失败 {failed}。'
-               '这是当前观察基线，包含原有效果缺陷，不代表质量合格。')
-    if gate:
-        summary = f'防退化门槛：{"通过" if gate["gate_passed"] else "未放行"}；退化/异常 {gate["failed_pages"]} 页次；变化待复核 {gate["review_pages"]} 页次。'
-        if gate.get('scope', 'all') != 'all':
-            summary = f'日常局部检查：{"通过" if gate["check_passed"] else "未通过"}；范围 {gate["scope"]}；退化/异常 {gate["failed_pages"]}，变化待复核 {gate["review_pages"]}。本结果不能用于更新默认基线。'
-    content = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>项目防退化控制报告 ' + escape(str(run['created_at'])[:16].replace('T', ' ')) + '</title><style>body{font:15px/1.7 system-ui;max-width:1600px;margin:30px auto;padding:20px;background:#f2f5f7;color:#243b46}article{background:white;padding:20px;margin:20px 0;border-radius:10px}.figs{display:flex;gap:12px;flex-wrap:wrap}figure{margin:0;flex:1;min-width:200px}img{width:100%;height:320px;object-fit:contain}pre{white-space:pre-wrap;overflow-wrap:anywhere}h2{font-size:17px;overflow-wrap:anywhere}</style><h1>项目防退化控制报告 · ' + escape(run['created_at']) + '</h1><p>' + escape(summary) + '</p><p>模式：桌面默认（文字识别与笔画补全始终开启）。逐张比较，任何明显退化阻断；输出、选区或路径变化待复核。像素误差不是水印残留率，未知质量保持未评估；所有样本均不作独立泛化证明。</p><pre>' + escape(json.dumps({k: v for k, v in (gate or {}).items() if k != 'cases'}, ensure_ascii=False, indent=2)) + '</pre>' + ''.join(cards) + '</html>'
-    (out / '项目防退化控制报告.html').write_text(content)
-    # 固定模板双报告：摘要（base64 单文件）+ 明细（tab/搜索，本地工具）。
+    # 固定模板双报告：摘要（base64 单文件，可发送）+ 明细（tab/搜索，本地逐张核查）。
+    # 旧版《项目防退化控制报告.html》已退役：摘要+明细覆盖其全部用途。
     # 只新增文件、不改封存件；失败不阻断主流程。
     try:
-        build_control_reports_both(out)
+        summary, detail = build_control_reports_both(out)
+        print(f'报告已生成：{summary}；{detail}', flush=True)
     except Exception as exc:
         print(f'双报告生成失败（不影响封存）：{type(exc).__name__}: {exc}', flush=True)
 
@@ -446,7 +416,7 @@ def main(argv=None):
     if args.command == 'compare':
         out = (args.out or ROOT / 'out/防退化对照' / stamp()).resolve()
         result = compare(args.candidate.resolve(), args.baseline.resolve(), out, args.reviews)
-        print(out / '项目防退化控制报告.html')
+        print(out)
         return 0 if result.get('check_passed', result['gate_passed']) else 1
     if args.command == 'promote':
         if not STATE.exists():
@@ -526,7 +496,7 @@ def main(argv=None):
         print('尚未运行，不具备防退化验收结论。')
         return 2
     run = execute(out)
-    print(out / '项目防退化控制报告.html', flush=True)
+    print(out, flush=True)
     if baseline:
         result = compare(out, baseline.resolve(), out.with_name(out.name + '_逐张对照'))
         return 0 if result['gate_passed'] else 1

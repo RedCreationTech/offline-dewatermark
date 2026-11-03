@@ -651,8 +651,7 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
         negative_counts.setdefault(m, 0)
     import hashlib as _hl
     payload = dict(rows=rows, counts=counts, negative_counts=negative_counts,
-                   sources=dict(original_report='项目防退化控制报告.html',
-                                original_records='运行记录.json', inventory='原始清单.json', rules='验收规则.json'),
+                   sources=dict(original_records='运行记录.json', inventory='原始清单.json', rules='验收规则.json'),
                    manifest=dict(created_at=datetime.now().astimezone().isoformat(timespec='seconds'),
                                  source_completed_at=run.get('completed_at'),
                                  source_record_sha256=_hl.sha256((out / '运行记录.json').read_bytes()).hexdigest(),

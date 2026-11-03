@@ -184,8 +184,10 @@ def baseline_card():
         entry, entry_label = summary_reports[-1], '摘要报告（结论与处理清单）'
     elif overview.exists():
         entry, entry_label = overview, '按效果分档查看'
+    elif detail_reports:
+        entry, entry_label = detail_reports[-1], '明细报告（逐张核查）'
     else:
-        entry, entry_label = directory / '项目防退化控制报告.html', '逐张结果'
+        entry, entry_label = directory / '项目防退化控制报告.html', '逐张结果（旧版）'
     manifest = json.loads((directory / '原始清单.json').read_text())
     body = f'<h2><a href="{href(entry)}">完整观察基线 {date}｜{entry_label}</a></h2><p class="state">{state} · {date} · 北京时间</p>'
     if overview.exists():
@@ -205,7 +207,9 @@ def baseline_card():
         links.append(('摘要报告（单文件可发送）', summary_reports[-1].name))
     if detail_reports:
         links.append(('明细报告（tab／搜索）', detail_reports[-1].name))
-    links.append(('逐图报告（旧版）', '项目防退化控制报告.html'))
+    legacy = directory / '项目防退化控制报告.html'
+    if legacy.exists():
+        links.append(('逐图报告（旧版）', '项目防退化控制报告.html'))
     links += [('运行记录与指标', '运行记录.json'),
               ('完整样本清单', '原始清单.json'), ('冻结验收规则', '验收规则.json'), ('封存校验', '封存校验.json')]
     body += '<p class="links">' + ' · '.join(f'<a href="{href(directory / filename)}">{label}</a>' for label, filename in links) + '</p>'
@@ -389,7 +393,8 @@ def main():
     report = None
     if directory is not None:
         report = directory / '项目防退化控制报告.html'
-        sealed_report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
+        if report.exists():
+            sealed_report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
     # Current full observation supersedes the old wording, not the old files.
     for item in curated:
         if '当前默认基线｜两批14张' in item['body']:
