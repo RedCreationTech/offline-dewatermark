@@ -176,19 +176,34 @@ def baseline_card():
     state = '已完成记录并封存' if complete else '记录尚未完整，不可验收'
     version = directory.name.rsplit('_', 1)[-1]
     overview = OUT / '完整基线效果总览_20261029_V1/去水印效果分档总览_20261029.html'
-    entry = overview if overview.exists() else directory / '项目防退化控制报告.html'
-    entry_label = '按效果分档查看' if overview.exists() else '三种模式逐张结果'
-    body = f'<h2><a href="{href(entry)}">完整观察基线 {escape(version)}｜{entry_label}</a></h2><p class="state">{state} · {date} · 北京时间</p>'
+    summary_reports = sorted(directory.glob('项目防退化控制摘要报告_*.html'))
+    detail_reports = sorted(directory.glob('项目防退化控制明细报告_*.html'))
+    if summary_reports:
+        entry, entry_label = summary_reports[-1], '摘要报告（结论与处理清单）'
+    elif overview.exists():
+        entry, entry_label = overview, '按效果分档查看'
+    else:
+        entry, entry_label = directory / '项目防退化控制报告.html', '三种模式逐张结果'
+    manifest = json.loads((directory / '原始清单.json').read_text())
+    body = f'<h2><a href="{href(entry)}">完整观察基线 {date}｜{entry_label}</a></h2><p class="state">{state} · {date} · 北京时间</p>'
     if overview.exists():
         body += '<p>新增三档效果总览：效果较好、一般／待复核、问题较多。可切换三种处理模式并查看实际原图与输出；分档仅为自动初筛。</p>'
         removal = ROOT / 'config/regression_retirements.json'
         if removal.exists():
             body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／三模式1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
-    body += (f'<p>398个输入场景、426张／页，三种模式共 <strong>{len(rows):,}／{len(run["expected_keys"]):,} 页次</strong>。'
+    body += (f'<p>{manifest["total_inputs"]}个输入场景、{manifest["total_pages"]}张／页，三种模式共 <strong>{len(rows):,}／{len(run["expected_keys"]):,} 页次</strong>。'
              f'运行或评分异常 {failures}；桌面默认 {modes["desktop"]}、关闭补全 {modes["desktop_protected"]}、CLI默认 {modes["cli"]} 页次。</p>'
              '<p><strong>观察基线记录当时表现，包括既有缺陷；不是当前工作版本全量通过、全部图片效果合格或独立泛化验证。</strong></p>')
-    links = [('逐图报告', '项目防退化控制报告.html'), ('运行记录与指标', '运行记录.json'),
-             ('完整样本清单', '原始清单.json'), ('冻结验收规则', '验收规则.json'), ('封存校验', '封存校验.json')]
+    links = []
+    summary_reports = sorted(directory.glob('项目防退化控制摘要报告_*.html'))
+    detail_reports = sorted(directory.glob('项目防退化控制明细报告_*.html'))
+    if summary_reports:
+        links.append(('摘要报告（单文件可发送）', summary_reports[-1].name))
+    if detail_reports:
+        links.append(('明细报告（tab／搜索）', detail_reports[-1].name))
+    links.append(('逐图报告（旧版）', '项目防退化控制报告.html'))
+    links += [('运行记录与指标', '运行记录.json'),
+              ('完整样本清单', '原始清单.json'), ('冻结验收规则', '验收规则.json'), ('封存校验', '封存校验.json')]
     body += '<p class="links">' + ' · '.join(f'<a href="{href(directory / filename)}">{label}</a>' for label, filename in links) + '</p>'
     return card('complete-observation-baseline-20261028-v3', 'baseline', body), directory
 
@@ -205,6 +220,11 @@ def discover(cards, baseline):
     for path in sorted(OUT.rglob('*.html')):
         if path.resolve() in linked or path == INDEX:
             continue
+        # 防退化控制封存：未完整跑完的轮次不进总目录（避免半截报告冒充成绩）。
+        if '项目防退化控制' in str(path):
+            run_record = path.parent / '运行记录.json'
+            if not run_record.exists() or not json.loads(run_record.read_text()).get('complete'):
+                continue
         name = path.name
         if any(k in str(path) for k in ('/代码快照/', '/基线代码/', '/暂存代码快照/', '/可维护源文件/', '/原生编辑工作区/', '/样本移除留档/', '/整理前备份/', '/更新前备份/')):
             continue
@@ -218,6 +238,12 @@ def discover(cards, baseline):
         raw = path.read_text(errors='replace')
         parser.feed(raw)
         title = ''.join(parser.title).strip()
+        # 防退化控制报告的标题补日期时间（封存件不改，只在目录显示名上补）。
+        if name == '项目防退化控制报告.html':
+            stamp = re.search(r'(\d{8}_\d{6})', path.parent.name)
+            if stamp:
+                moment = datetime.strptime(stamp.group(1), '%Y%m%d_%H%M%S')
+                title = f'项目防退化控制报告 {moment:%Y-%m-%d %H:%M}'
         if not title or title == '水印验证报告总目录':
             continue
         relative = path.relative_to(OUT).as_posix()
@@ -342,6 +368,18 @@ def main():
     else:
         source = ''  # 首次在本机生成总目录，从空分类起步
     curated = original_cards(source)
+    # 丢弃指向未完整跑完的防退化控制封存的旧条目（半截轮次不是成绩）。
+    def links_incomplete_freeze(body: str) -> bool:
+        for link in re.findall(r'href="([^"]+)"', body):
+            decoded = unquote(link)
+            if '项目防退化控制' not in decoded:
+                continue
+            target = (OUT / urlsplit(decoded).path).resolve()
+            record = target.parent / '运行记录.json'
+            if record.exists() and not json.loads(record.read_text()).get('complete'):
+                return True
+        return False
+    curated = [item for item in curated if not links_incomplete_freeze(item['body'])]
     baseline, directory = baseline_card()
     sealed_report_hash = None
     report = None
