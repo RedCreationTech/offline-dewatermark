@@ -57,9 +57,8 @@ class StrokeColourTests(unittest.TestCase):
             self.assertEqual(output.repair_mode, 'texture_overlay')
             self.assertIs(output.alpha, mask.alpha)
 
-    def test_cli_experiment_is_explicit_and_enables_supported_stroke_route(self):
-        for arguments, priority, experimental in [([], False, False),
-                (['--recall-priority'], True, False),
+    def test_cli_recall_is_always_enabled_and_experiments_stay_explicit(self):
+        for arguments, priority, experimental in [([], True, False),
                 (['--experimental-colour-refinement'], True, True)]:
             with self.subTest(arguments=arguments), \
                  patch('wm.cli.pipeline.process_file', return_value=[]) as process, \

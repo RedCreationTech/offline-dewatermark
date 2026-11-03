@@ -296,12 +296,11 @@ class DesktopEntryTests(unittest.TestCase):
         from wm.app import make_app
         cls.qt = make_app()
 
-    def test_trial_entry_hides_completion_choice_and_submits_automatic_job(self):
+    def test_trial_entry_marks_itself_and_submits_automatic_job(self):
         from wm.app import MainWindow
         from wm.batches import Batch
         win = MainWindow(automatic_selection=True)
         try:
-            self.assertTrue(win.recall_box.isHidden())
             win.batches.append(Batch('任意批次', [PageImage(np.full((20, 30, 3), 240, np.uint8), 72)]))
             win.refresh_batches()
             win.batch_list.setCurrentRow(0)
@@ -317,8 +316,9 @@ class DesktopEntryTests(unittest.TestCase):
         win = MainWindow()
         try:
             self.assertFalse(win.automatic_selection)
-            self.assertFalse(win.recall_box.isHidden())
-            self.assertTrue(win.recall_box.isChecked())
+            # 补全与文字识别为始终开启能力，不再提供开关控件
+            self.assertFalse(hasattr(win, 'recall_box'))
+            self.assertFalse(hasattr(win, 'ocr_box'))
         finally:
             win.close()
 

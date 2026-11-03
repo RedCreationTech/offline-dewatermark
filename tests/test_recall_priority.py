@@ -151,19 +151,17 @@ class RecallWorkbenchTests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = make_app()
 
-    def test_default_priority_is_saved_per_batch_and_can_be_disabled(self):
+    def test_recall_is_always_enabled_without_a_toggle(self):
         window = MainWindow()
         page = PageImage(np.full((20, 30, 3), 180, np.uint8), 96)
         window.batches = [Batch('one', [page]), Batch('two', [page])]
         window.refresh_batches()
         window.batch_list.setCurrentRow(0)
         self.assertTrue(window.current_thr().watermark_recall_priority)
-        window.recall_box.setChecked(False)
-        self.assertFalse(window.batch.recall_priority)
         window.batch_list.setCurrentRow(1)
         self.assertTrue(window.current_thr().watermark_recall_priority)
-        window.batch_list.setCurrentRow(0)
-        self.assertFalse(window.current_thr().watermark_recall_priority)
+        self.assertFalse(hasattr(window, 'recall_box'))
+        self.assertFalse(hasattr(window, 'ocr_box'))
         window.close()
 
 
