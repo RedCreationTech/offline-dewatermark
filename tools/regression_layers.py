@@ -80,11 +80,10 @@ def make_plan(files, inventory, baseline, rules, requested='auto', targets=()):
         fixed = [r for r in cases if r['group'] == '固定回归']
         affected = [r['id'] for r in fixed if r['style'] in styles]
         seeds = list(rules['protection_seeds']) + list(targets) + affected
-        probes = rules['cross_mode_probes' if level == 'cross' else 'targeted_mode_probes']
         if level == 'cross':
-            seeds += [r['id'] for r in fixed] + list(probes)
+            # 单模式口径：原跨模式探针并入桌面默认选择，覆盖同一批保护样本。
+            seeds += [r['id'] for r in fixed] + list(rules.get('cross_extra_seeds', []))
         selections = {'desktop': expand_batches(seeds, cases)}
-        selections.update({m: expand_batches(probes, cases) for m in ('desktop_protected', 'cli')})
     else:
         selections = {}
     expected = [f"{mode}:{r['id']}:{page}" for mode, names in selections.items()

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "description": "2026-10-28 预先固定的逐张防退化规则；变更规则后必须重新建基线，不能追认旧结果。",
-  "required_modes": ["desktop", "desktop_protected", "cli"],
+  "description": "2026-10-28 预先固定的逐张防退化规则；变更规则后必须重新建基线，不能追认旧结果。2026-11-03 口径变更（见 docs/decisions/2026-11-03-单模式基线与面板收敛.md）：应用删除文字识别与笔画补全开关后，回归只保留桌面默认一种模式；旧三模式封存（1,269 页次）保留不追认。",
+  "required_modes": ["desktop"],
   "page_timeout_seconds": 240,
   "limits": {
     "recall_drop": 0.01,

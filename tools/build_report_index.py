@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import re
 import shutil
+
+mode_label_legacy = {'desktop': '桌面默认', 'desktop_protected': '桌面关闭补全', 'cli': 'CLI 默认'}
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
@@ -183,16 +185,18 @@ def baseline_card():
     elif overview.exists():
         entry, entry_label = overview, '按效果分档查看'
     else:
-        entry, entry_label = directory / '项目防退化控制报告.html', '三种模式逐张结果'
+        entry, entry_label = directory / '项目防退化控制报告.html', '逐张结果'
     manifest = json.loads((directory / '原始清单.json').read_text())
     body = f'<h2><a href="{href(entry)}">完整观察基线 {date}｜{entry_label}</a></h2><p class="state">{state} · {date} · 北京时间</p>'
     if overview.exists():
-        body += '<p>新增三档效果总览：效果较好、一般／待复核、问题较多。可切换三种处理模式并查看实际原图与输出；分档仅为自动初筛。</p>'
+        body += '<p>新增三档效果总览：效果较好、一般／待复核、问题较多。可查看实际原图与输出；分档仅为自动初筛。</p>'
         removal = ROOT / 'config/regression_retirements.json'
         if removal.exists():
-            body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／三模式1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
-    body += (f'<p>{manifest["total_inputs"]}个输入场景、{manifest["total_pages"]}张／页，三种模式共 <strong>{len(rows):,}／{len(run["expected_keys"]):,} 页次</strong>。'
-             f'运行或评分异常 {failures}；桌面默认 {modes["desktop"]}、关闭补全 {modes["desktop_protected"]}、CLI默认 {modes["cli"]} 页次。</p>'
+            body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
+    mode_bits = '、'.join(f'{mode_label_legacy.get(m, m)} {n}' for m, n in sorted(modes.items()))
+    body += (f'<p>{manifest["total_inputs"]}个输入场景、{manifest["total_pages"]}张／页，'
+             f'共 <strong>{len(rows):,}／{len(run["expected_keys"]):,} 页次</strong>。'
+             f'运行或评分异常 {failures}；{mode_bits} 页次。</p>'
              '<p><strong>观察基线记录当时表现，包括既有缺陷；不是当前工作版本全量通过、全部图片效果合格或独立泛化验证。</strong></p>')
     links = []
     summary_reports = sorted(directory.glob('项目防退化控制摘要报告_*.html'))

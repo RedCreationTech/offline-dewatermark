@@ -28,8 +28,7 @@ def fixture():
         ('manual/2', 'manual', '开发', 'tiled_irregular', 1))]
     rules = copy.deepcopy(RULES)
     rules.update(protection_seeds=['fixed/a', 'fixed/negative', 'fixed/pdf'],
-                 targeted_mode_probes=['fixed/negative', 'fixed/pdf'],
-                 cross_mode_probes=['fixed/negative', 'fixed/pdf', 'manual/1'])
+                 cross_extra_seeds=['fixed/negative', 'fixed/pdf', 'manual/1'])
     profiles = {m: {'recall': m == 'desktop'} for m in POLICY['required_modes']}
     rows = []
     for mode in profiles:
@@ -123,7 +122,7 @@ class LayerTests(unittest.TestCase):
         run = dict(profiles=old['profiles'], scope='cross', selection_plan=plan)
         jobs = jobs_for(inv, run)
         manual = [rows for mode, batch, rows in jobs if batch == 'manual']
-        self.assertEqual(len(manual), 3)
+        self.assertEqual(len(manual), 1)
         self.assertTrue(all([r['id'] for r in rows] == ['manual/1', 'manual/2'] for rows in manual))
 
     def test_full_plan_preserves_all_existing_modes_and_pages(self):

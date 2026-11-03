@@ -29,6 +29,9 @@ from urllib.parse import quote, unquote
 
 from PIL import Image
 
+# 历史三模式标签（旧封存数据仍可能出现）；新数据只有 desktop。
+mode_label_legacy = {'desktop': '桌面默认', 'desktop_protected': '桌面关闭补全', 'cli': 'CLI 默认'}
+
 # 术语词表：专业词 -> 白话解释。新词直接加在这里，两份报告自动生效。
 GLOSSARY = {
     '笔画召回率': '真实水印笔画里被选中的比例。100% = 一笔没漏；数字越低漏得越多。分母含淡笔画，不能用"淡的看不见"掩饰漏检。',
@@ -393,11 +396,17 @@ def conclusion_html(run: dict, a: dict) -> str:
                      f'{f"、未配对 {c["unpaired"]}" if c["unpaired"] else ""}。{direction}。'
                      f'<br><span style="font-size:13px;opacity:.85">⚠ 非受控对照：差异混有代码与运行环境变化，不能归因于某次改动；'
                      f'从下一轮起与本机封存基线对比才是验收口径。退化/优化明细见下方“较上次”两个 tab。</span></div>')
-    pages_per_mode = max(sum(1 for r in a['recs'] if r['mode'] == m) for m in ('desktop', 'desktop_protected', 'cli'))
+    present_modes = [m for m in ('desktop', 'desktop_protected', 'cli') if any(r['mode'] == m for r in a['recs'])] or ['desktop']
+    pages_per_mode = max(sum(1 for r in a['recs'] if r['mode'] == m) for m in present_modes)
     complete = run.get('complete') and run.get('integrity_verified')
     multi = pages_per_mode - a['inputs']
-    lines = [f'本次测试 {a["inputs"]} 个输入文件、共 {pages_per_mode} 页：其中 {multi} 页来自多页 PDF（一个 PDF 文件含多页，每页单独处理、单独评分），'
-             f'其余是一张图一页。三种处理模式各把全部 {pages_per_mode} 页跑一遍（合计 {pages_per_mode * 3} 页次）；'
+    if len(present_modes) == 1:
+        mode_sentence = f'处理模式为桌面默认（文字识别与笔画补全始终开启），全部 {pages_per_mode} 页跑一遍（合计 {pages_per_mode} 页次）；'
+    else:
+        mode_sentence = (f'{"、".join(mode_label_legacy[m] for m in present_modes)}各把全部 {pages_per_mode} 页跑一遍'
+                         f'（合计 {pages_per_mode * len(present_modes)} 页次）；')
+    lines = [f'本次测试 {a["inputs"]} 个输入文件、共 {pages_per_mode} 页：其中 {multi} 页来自多页 PDF'
+             f'（一个 PDF 文件含多页，每页单独处理、单独评分），其余是一张图一页。{mode_sentence}'
              f'以下类型结果按“桌面默认”模式口径。']
     if not complete:
         lines.append(f'⚠ 本轮未完整：完成 {len(a["recs"]):,} / {len(run["expected_keys"]):,} 页次，结果不能用于验收。')
@@ -437,7 +446,6 @@ def chips_html(run: dict, a: dict) -> str:
     modes = {}
     for r in a['recs']:
         modes[r['mode']] = modes.get(r['mode'], 0) + 1
-    mode_label = {'desktop': '桌面默认', 'desktop_protected': '桌面关闭补全', 'cli': 'CLI 默认'}
     items = [
         (f'{len(a["recs"]):,}/{len(run["expected_keys"]):,}', '完成页次', 'good' if not a['errors'] else ''),
         (str(len(a['errors'])), '运行错误', 'bad' if a['errors'] else 'good'),
@@ -447,7 +455,8 @@ def chips_html(run: dict, a: dict) -> str:
         (f'{a["mean_elapsed"]:.1f}s' if a['mean_elapsed'] else '—', '平均耗时/页', ''),
     ]
     for m in ('desktop', 'desktop_protected', 'cli'):
-        items.append((str(modes.get(m, 0)), mode_label[m], ''))
+        if m in modes:
+            items.append((str(modes[m]), mode_label_legacy[m], ''))
     return '<div class="board">' + ''.join(
         f'<div class="chip"><div class="v {c}">{esc(v)}</div><div class="k">{mark_terms(esc(k))}</div></div>' for v, k, c in items) + '</div>'
 
@@ -510,12 +519,12 @@ def build_summary(out: Path, run: dict, a: dict, moment: str) -> Path:
     for r in a['paired']:
         if r.get('recall') is not None:
             grid.setdefault((r['mode'], r['group']), []).append(r)
-    mode_label = {'desktop': '桌面默认', 'desktop_protected': '桌面关闭补全', 'cli': 'CLI 默认'}
+    present = [m for m in ('desktop', 'desktop_protected', 'cli') if any(k[0] == m for k in grid)] or ['desktop']
     groups = sorted({g for _, g in grid})
     rows = []
     for g in groups:
         tds = [f'<td>{e(g)}</td>']
-        for m in ('desktop', 'desktop_protected', 'cli'):
+        for m in present:
             cell = grid.get((m, g), [])
             if not cell:
                 tds.append('<td class="muted">—</td>')
@@ -527,7 +536,8 @@ def build_summary(out: Path, run: dict, a: dict, moment: str) -> Path:
             tds.append(f'<td class="r"><span class="{cls}">{fmt_pct(rc)}</span><br>'
                        f'<span class="muted">多选均 {fmt_pct(fp_mean)} · {len(cell)}页</span></td>')
         rows.append('<tr>' + ''.join(tds) + '</tr>')
-    table_html = ('<table><tr><th>批次</th><th>桌面默认（均召回）</th><th>桌面关闭补全</th><th>CLI 默认</th></tr>'
+    header_cells = ''.join(f'<th>{e(mode_label_legacy[m] + ("（均召回）" if m == "desktop" else ""))}</th>' for m in present)
+    table_html = ('<table><tr><th>批次</th>' + header_cells + '</tr>'
                   + ''.join(rows) + '</table>')
 
     page = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -663,6 +673,13 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
                     f'无水印对照按是否发生改动判定。该参考运行在旧机器＋旧代码上，对比是观察口径，不是验收门槛。'
                     f'从下一轮起，对比对象为本机封存基线，才是受控口径。</p>')
     data_json = json.dumps(payload, ensure_ascii=False).replace('</script', '<\\/script')
+    detail_modes = [m for m in ('desktop', 'desktop_protected', 'cli') if m in counts] or ['desktop']
+    if len(detail_modes) == 1:
+        modebar_html = f'<p class="scope" style="margin:6px 0">处理模式：{e(mode_label_legacy[detail_modes[0]])}</p>'
+    else:
+        options = ''.join(f'<option value="{m}">{e(mode_label_legacy[m])}</option>' for m in detail_modes)
+        modebar_html = (f'<div class="modebar"><label>处理模式<select id="mode">{options}</select></label>'
+                        f'<span class="scope" id="scope"></span></div>')
 
     page = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>项目防退化控制明细报告 {e(moment)}</title>
@@ -692,7 +709,7 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
 <p class="note">三档是自动指标初筛，不是验收结论；专业术语带 <i style="display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;font-size:10px;font-style:normal;background:#b0761a;color:#fff;border-radius:50%">?</i> 的可点击看解释。可发送的单文件摘要在同目录。</p>
 </div>
 <p class="notice"><strong>三档是自动指标初筛，尚未逐张人工验收。</strong>“效果较好”不等于全部内容恢复正确；像素误差减少不等于水印去除率。无水印对照默认隐藏，勾选后可查看；它们仍用于检查误删，不计作去水印成功。</p>
-<div class="modebar"><label>处理模式<select id="mode"><option value="desktop">桌面默认（笔画补全开启）</option><option value="desktop_protected">桌面关闭笔画补全</option><option value="cli">CLI 默认（逐文件）</option></select></label><span class="scope" id="scope"></span></div>
+{modebar_html}
 <nav class="tabs" role="tablist" aria-label="按去水印效果分类">
 <button id="tab-good" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="true" data-bucket="good"><span class="label">效果较好</span><span class="num" id="count-good">—</span><span class="small">指标初筛较好／无水印安全保留</span></button>
 <button id="tab-review" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="false" tabindex="-1" data-bucket="review"><span class="label">一般／待复核</span><span class="num" id="count-review">—</span><span class="small">有差异、证据不足或需要目视核对</span></button>
