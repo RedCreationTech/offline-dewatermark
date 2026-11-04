@@ -391,6 +391,14 @@ def main():
                 return True
         return False
     curated = [item for item in curated if not links_incomplete_freeze(item['body'])]
+    # 丢弃主链接目标已不存在的旧条目（如按修订删除的旧版报告），避免总目录残留失效入口。
+    def primary_link_missing(body: str) -> bool:
+        links = re.findall(r'href="([^"]+)"', body)
+        if not links:
+            return False
+        target = (OUT / urlsplit(unquote(links[0])).path).resolve()
+        return not target.is_file()
+    curated = [item for item in curated if not primary_link_missing(item['body'])]
     baseline, directory = baseline_card()
     sealed_report_hash = None
     report = None
