@@ -122,7 +122,7 @@ def category(value):
     if any(k in value for k in ('项目防退化控制', '分层防退化检查', '项目整理', '样本移除记录', 'project-control', '空间清理审计', '验收报告')):
         return 'control'
     if any(k in value for k in ('失败案例', 'bottleneck', 'failure-cases', '瓶颈判断', '漏检原因分析',
-                                'batch_diagnosis', 'report_before.html', 'export_selection_diagnosis', '分步体检')):
+                                '漏检诊断', 'batch_diagnosis', 'report_before.html', 'export_selection_diagnosis', '分步体检')):
         return 'diagnosis'
     if any(k in value for k in ('历史错误', '旧版错误', 'recall_priority', '历史示意版', '早期分析',
                                 'center_refinement', 'new_samples', 'app_quick20', 'small_dataset_rerun',
