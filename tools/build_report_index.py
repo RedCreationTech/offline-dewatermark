@@ -421,6 +421,28 @@ def main():
     cards = list(unique.values())
     for item in cards:
         item['body'] = available_local_links(clean_document_links(item['body']))
+
+    # 全部入口按时间倒序：最新在前。日期取条目正文中的第一个日期（标题/状态行），
+    # 无日期时退回链接目标的文件修改时间，都没有的排最后。
+    def card_moment(item):
+        import datetime as dt
+        from urllib.parse import unquote
+        # 只从可见文字取日期，避免 href 里目录名（运行开始时间）干扰标题时间。
+        text = re.sub(r'<[^>]+>', ' ', item['body'])
+        match = re.search(r'(20\d{2})[-_年.]?(\d{1,2})[-_月.]?(\d{1,2})(?:[日_ \u3000]+(\d{1,2})[:：](\d{2}))?', text)
+        if match:
+            try:
+                return dt.datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)),
+                                   int(match.group(4) or 0), int(match.group(5) or 0))
+            except ValueError:
+                pass
+        link = re.search(r'href="([^"]+)"', text)
+        if link:
+            target = (OUT / unquote(link.group(1))).resolve()
+            if target.is_file():
+                return dt.datetime.fromtimestamp(target.stat().st_mtime)
+        return dt.datetime.min
+    cards.sort(key=card_moment, reverse=True)
     counts = Counter(item['category'] for item in cards)
     baseline_summary = '<span>历史完整观察基线：1,278 页次已记录</span>' if baseline else '<span>本机尚未建立观察基线</span>'
     initial = 'baseline' if baseline else 'all'
