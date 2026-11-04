@@ -39,7 +39,7 @@ GLOSSARY = {
     '选区精确率': '程序选中的像素里，真是水印的比例。低 = 把背景或正文也圈进来修了。',
     '漏选': '真水印笔画里没被程序选中的像素，蓝色标记。漏选越多，修完残留越多。',
     '多选': '程序选中但其实不是水印的像素（背景/正文），橙色标记。按占全图百分比判定严重程度，大小图同一标准。',
-    '页数': '该水印类型在本次测试中实际运行的页数。同一张图按页计数；本表只统计桌面默认模式。',
+    '页数': '该水印类型在本次测试中实际运行的页数。同一张图按页计数。',
     '均笔画召回率': '该类型所有页“笔画召回率”的平均值。笔画召回率＝选中的水印笔画像素 ÷ 全部水印笔画像素（含淡边缘），越高表示水印选得越全。',
     '均多选占比': '该类型所有页“多选背景占全图面积”的平均百分比。多选占比＝误选的非水印像素 ÷ 全图总像素，越高表示误伤背景/正文越多。',
     '均精确率': '该类型所有页“选区精确率”的平均值。精确率＝选区里真正属于水印的像素 ÷ 全部选中像素，越高表示选得越准、误伤越少。',
@@ -49,8 +49,7 @@ GLOSSARY = {
     '选区占比': '选中像素占整张图的比例，衡量修复范围大小。',
     '参考误差': '输出图与干净参考图在水印区域内的平均像素差（MAE）。是重建差异，不等于水印残留率。',
     '非水印区误差': '非水印区域的平均像素差。理想应为 0——不为 0 说明好地方被改动了。',
-    '页次': '一张输入图片算 1 页次；多页 PDF 每页各算 1 页次。三种模式各跑一遍，所以总页次 = 样本页数 × 3。',
-    '处理模式': '同一批输入跑三遍：桌面默认（笔画补全开）、桌面关闭增强、CLI 默认。用于发现模式间的差异退化。',
+    '页次': '一张输入图片算 1 页次；多页 PDF 每页各算 1 页次。总页次 = 样本页数。',
     '负例': '无水印的对照图。合格线：选区为空且输出与输入逐字节一致，任何改动都算失败。',
     '退化': '和基线比，同一样本的指标明显变差（如召回下降、误伤增加）。',
     '待复核': '输出或选区发生了变化但自动判定拿不准，需要人看图确认，不自动算通过也不算失败。',
@@ -401,13 +400,13 @@ def conclusion_html(run: dict, a: dict) -> str:
     complete = run.get('complete') and run.get('integrity_verified')
     multi = pages_per_mode - a['inputs']
     if len(present_modes) == 1:
-        mode_sentence = f'处理模式为桌面默认（文字识别与笔画补全始终开启），全部 {pages_per_mode} 页跑一遍（合计 {pages_per_mode} 页次）；'
+        mode_sentence = f'全部 {pages_per_mode} 页跑一遍（合计 {pages_per_mode} 页次）；'
     else:
         mode_sentence = (f'{"、".join(mode_label_legacy[m] for m in present_modes)}各把全部 {pages_per_mode} 页跑一遍'
                          f'（合计 {pages_per_mode * len(present_modes)} 页次）；')
     lines = [f'本次测试 {a["inputs"]} 个输入文件、共 {pages_per_mode} 页：其中 {multi} 页来自多页 PDF'
              f'（一个 PDF 文件含多页，每页单独处理、单独评分），其余是一张图一页。{mode_sentence}'
-             f'以下类型结果按“桌面默认”模式口径。']
+             f'以下类型结果按全部样本口径。']
     if not complete:
         lines.append(f'⚠ 本轮未完整：完成 {len(a["recs"]):,} / {len(run["expected_keys"]):,} 页次，结果不能用于验收。')
     if a['errors']:
@@ -439,7 +438,7 @@ def conclusion_html(run: dict, a: dict) -> str:
         worst = (f'<h3 style="margin:14px 0 6px">问题最大的水印样式与初步分析（按问题档占比排序）</h3><ol>{items}</ol>')
     else:
         worst = '<p class="good">没有样式进入问题档。</p>'
-    return cmp_block + banner + worst + f'<h3 style="margin:16px 0 6px">每种类型测试结果（桌面默认模式，按问题占比排序）</h3>{style_table}'
+    return cmp_block + banner + worst + f'<h3 style="margin:16px 0 6px">每种类型测试结果（按问题占比排序）</h3>{style_table}'
 
 
 def chips_html(run: dict, a: dict) -> str:
@@ -454,9 +453,10 @@ def chips_html(run: dict, a: dict) -> str:
         (str(len(a['high_fp'])), '多选超线页', 'bad' if a['high_fp'] else 'good'),
         (f'{a["mean_elapsed"]:.1f}s' if a['mean_elapsed'] else '—', '平均耗时/页', ''),
     ]
-    for m in ('desktop', 'desktop_protected', 'cli'):
-        if m in modes:
-            items.append((str(modes[m]), mode_label_legacy[m], ''))
+    if len(modes) > 1:
+        for m in ('desktop', 'desktop_protected', 'cli'):
+            if m in modes:
+                items.append((str(modes[m]), mode_label_legacy[m], ''))
     return '<div class="board">' + ''.join(
         f'<div class="chip"><div class="v {c}">{esc(v)}</div><div class="k">{mark_terms(esc(k))}</div></div>' for v, k, c in items) + '</div>'
 
@@ -507,11 +507,14 @@ def build_summary(out: Path, run: dict, a: dict, moment: str) -> Path:
         return f'<div class="figs">{"".join(imgs)}</div>' if imgs else '<p class="muted">无图像产物。</p>'
 
     blocks = []
+    multi_mode = len({x['mode'] for x in a['recs']}) > 1
     for r in show:
         why = '运行错误' if r['status'] == 'error' else (
             f'召回 {fmt_pct(r.get("recall"))}' + (f'、多选 {fmt_fp(r.get("false_positive_pixels"), r["_fp_frac"])}'
                                                  if (r['_fp_frac'] or 0) > BAD_FP_FRAC or (r.get('false_positive_pixels') or 0) > BAD_FP_PX else ''))
-        blocks.append(f'<div class="case"><h3>{e(_case_title(r))}　<span class="muted">{e(r["mode"])}</span></h3>'
+        mode_span = f'　<span class="muted">{e(r["mode"])}</span>' if multi_mode else ''
+        blocks.append(f'<div class="case"><h3>{e(_case_title(r))}　<span class="muted">{e(r["group"])}</span>'
+                      f'{mode_span}</h3>'
                       f'<p class="bad">▲ {e(why)}</p><p class="muted">{e(_case_metric_line(r))}</p>{figs_embed(r)}</div>')
     list_html = ''.join(blocks) if blocks else '<p class="good">没有运行错误，也没有触发异常参考线的样本。</p>'
 
@@ -536,7 +539,10 @@ def build_summary(out: Path, run: dict, a: dict, moment: str) -> Path:
             tds.append(f'<td class="r"><span class="{cls}">{fmt_pct(rc)}</span><br>'
                        f'<span class="muted">多选均 {fmt_pct(fp_mean)} · {len(cell)}页</span></td>')
         rows.append('<tr>' + ''.join(tds) + '</tr>')
-    header_cells = ''.join(f'<th>{e(mode_label_legacy[m] + ("（均召回）" if m == "desktop" else ""))}</th>' for m in present)
+    if len(present) == 1:
+        header_cells = '<th>均笔画召回</th>'
+    else:
+        header_cells = ''.join(f'<th>{e(mode_label_legacy[m] + ("（均召回）" if m == "desktop" else ""))}</th>' for m in present)
     table_html = ('<table><tr><th>批次</th>' + header_cells + '</tr>'
                   + ''.join(rows) + '</table>')
 
@@ -548,7 +554,7 @@ def build_summary(out: Path, run: dict, a: dict, moment: str) -> Path:
 <p class="note">本报告为摘要单文件（图片 base64 内嵌，可直接发送）；逐页明细见同目录《项目防退化控制明细报告 {e(moment)}》。分档指标：运行错误、负例改动、笔画召回率、非水印区误差；多选背景只逐张展示、不参与分档。像素误差不是水印残留率；所有样本不作独立泛化证明。</p>
 <h2>处理清单（运行错误 + 触发异常参考线的样本）</h2>
 {list_html}
-<h2>分层总表（带水印样本，按模式 × 批次平均）</h2>
+<h2>分层总表（带水印样本，按批次平均）</h2>
 {table_html}
 <p class="muted">参考线口径：平均笔画召回率 &lt;30% 标红、30–60% 标黄；多选背景超线样本列入上方清单但不影响分档。统计含全部完成页，错误页另列。</p>
 </main><div id="term-pop"></div><script>{TERMS_JS}</script></body></html>'''
@@ -667,14 +673,15 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
                     f'<span class="small">对比 {e(a["ref_label"])}，按召回升幅排序</span></button>')
     cmp_note = ''
     if a.get('ref_label'):
-        cmp_note = (f'<h3>“较上次退化／优化”怎么判定</h3><p>与封存目录里的 {e(a["ref_label"])} 逐页配对（模式＋输入＋页码），'
+        pair_keys = '模式＋输入＋页码' if len(counts) > 1 else '输入＋页码'
+        cmp_note = (f'<h3>“较上次退化／优化”怎么判定</h3><p>与封存目录里的 {e(a["ref_label"])} 逐页配对（{pair_keys}），'
                     f'以笔画召回率差（容差 ±{CMP_RECALL_TOL * 100:.0f} 个百分点）为主、水印区参考误差差（容差 ±{CMP_MAE_TOL:.0f}）为辅判定；'
                     f'无水印对照按是否发生改动判定。该参考运行在旧机器＋旧代码上，对比是观察口径，不是验收门槛。'
                     f'从下一轮起，对比对象为本机封存基线，才是受控口径。</p>')
     data_json = json.dumps(payload, ensure_ascii=False).replace('</script', '<\\/script')
     detail_modes = [m for m in ('desktop', 'desktop_protected', 'cli') if m in counts] or ['desktop']
     if len(detail_modes) == 1:
-        modebar_html = f'<p class="scope" style="margin:6px 0">处理模式：{e(mode_label_legacy[detail_modes[0]])}</p>'
+        modebar_html = ''  # 单模式无模式信息量，不展示
     else:
         options = ''.join(f'<option value="{m}">{e(mode_label_legacy[m])}</option>' for m in detail_modes)
         modebar_html = (f'<div class="modebar"><label>处理模式<select id="mode">{options}</select></label>'
@@ -721,13 +728,13 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
 <p class="view-note" id="view-note" role="status" aria-live="polite"></p><div class="cards" id="cards"></div><div class="empty" id="empty" hidden>当前条件下没有图片，可切换档位、样式或清空搜索。</div>
 <div class="pager"><button id="previous" type="button">上一页</button><span id="pagination"></span><button id="next" type="button">下一页</button></div>
 </section>
-<details class="methods"><summary>查看分档规则、三模式统计和数据来源</summary>
+<details class="methods"><summary>查看分档规则、统计和数据来源</summary>
 <h3>这是效果初筛，不是验收门槛</h3>
 <p>效果较好：笔画召回率≥60%、非水印区新增平均误差≤1.0，且评分完整；无水印且没有选区、没有改动的对照也放在本档并单独标注。</p>
 <p>问题较多：运行错误；或无水印对照发生误选／改动；或笔画召回率&lt;30%。其余与无法评估的记录放入一般／待复核。多选背景不作为分档指标，只逐张展示（绝对像素＋占全图百分比），供目视参考。</p>
 <p>笔画召回的真值为 alpha&gt;0 的全部水印像素，不隐藏淡边缘。字间空白、实际水印残留和正文识别正确率尚未可靠评估；像素误差不等于残留率。</p>
 <h3>重复样本如何处理</h3>
-<p id="deduplication-note">默认按“模式＋输入文件哈希＋页码”合并，同图不同批次展示较差档。勾选“显示重复批次记录”可查看全部批次。PDF 与 JPG 属于不同输入。</p>
+<p id="deduplication-note">默认按“输入文件哈希＋页码”合并，同图不同批次展示较差档。勾选“显示重复批次记录”可查看全部批次。PDF 与 JPG 属于不同输入。</p>
 {cmp_note}
 <div id="mode-summary"></div><div class="sources" id="sources"></div>
 <p>这些数据来自开发、回归和历史样本，没有新的独立泛化验证；基线轮记录当时表现（含既有缺陷），不代表质量合格。原始封存文件未修改，本页分档规则只用于阅读，不改变防退化验收规则。</p>
@@ -770,6 +777,10 @@ def build_both(out: Path) -> tuple[Path, Path]:
         cmp_counts[cmp_ if cmp_ in ('better', 'worse', 'same') else 'unpaired'] += 1
     a['cmp_counts'] = cmp_counts
     moment = run_moment(run)
+    stamp = moment.replace('-', '').replace(' ', '_').replace(':', '')
+    if (out / f'项目防退化控制摘要报告_{stamp}.html').exists():
+        # 目标报告已封存不可覆盖：用本次生成时间做新版本名（取自当前运行，不手填）。
+        moment = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M')
     return build_summary(out, run, a, moment), build_detail(out, run, a, moment)
 
 

@@ -195,10 +195,13 @@ def baseline_card():
         removal = ROOT / 'config/regression_retirements.json'
         if removal.exists():
             body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
-    mode_bits = '、'.join(f'{mode_label_legacy.get(m, m)} {n}' for m, n in sorted(modes.items()))
+    if len(modes) > 1:
+        mode_bits = '、'.join(f'{mode_label_legacy.get(m, m)} {n}' for m, n in sorted(modes.items())) + ' 页次'
+    else:
+        mode_bits = f'共 {len(rows):,} 页次'
     body += (f'<p>{manifest["total_inputs"]}个输入场景、{manifest["total_pages"]}张／页，'
              f'共 <strong>{len(rows):,}／{len(run["expected_keys"]):,} 页次</strong>。'
-             f'运行或评分异常 {failures}；{mode_bits} 页次。</p>'
+             f'运行或评分异常 {failures}；{mode_bits}。</p>'
              '<p><strong>观察基线记录当时表现，包括既有缺陷；不是当前工作版本全量通过、全部图片效果合格或独立泛化验证。</strong></p>')
     links = []
     summary_reports = sorted(directory.glob('项目防退化控制摘要报告_*.html'))
