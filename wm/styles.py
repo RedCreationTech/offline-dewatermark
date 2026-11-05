@@ -12,6 +12,7 @@ STYLE_CHANNELS: dict[str, tuple[str, ...]] = {
     "big_center": ("document_overlay", "chromatic"),
     "heavy_dark": ("dark_text", "repeated", "paper_repeat"),
     "corner_id": ("corner_id",),
+    "faint": ("faint_region",),
 }
 
 # 中英文提示词 → 样式代码。键全部小写；按子串匹配，先长后短避免歧义。
@@ -34,6 +35,9 @@ _PROMPTS: dict[str, str] = {
     # 角标
     "角标": "corner_id", "角落": "corner_id", "页脚": "corner_id",
     "corner": "corner_id", "corner id": "corner_id", "corner_id": "corner_id",
+    # 极淡
+    "极淡": "faint", "很淡": "faint", "浅淡": "faint", "淡淡的": "faint",
+    "faint": "faint", "very faint": "faint", "faint text": "faint",
 }
 
 

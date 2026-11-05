@@ -90,6 +90,11 @@ class Thresholds:
     experimental_colour_refinement: bool = False  # opt-in; no independent holdout claim
     experimental_seed_preservation: bool = False  # source-supported old strokes; opt-in candidate
     experimental_oblique_detection: bool = False  # balanced chromatic fallback; opt-in candidate
+    # Region-level uniform-tint inverse for sub-threshold stains on an ample
+    # paper reference. Isolated candidate: off by default, style-gated; the
+    # measured opacity rides overlay_opacity because alpha sits below
+    # mask_alpha_min by design.
+    experimental_faint_region: bool = False
 
 
 @dataclass

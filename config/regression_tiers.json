@@ -23,7 +23,7 @@
     "wm/pdf_images.py": ["independent_image", "nested_form", "mixed_storage"]
   },
   "protection_seeds": ["固定回归/core_007", "固定回归/core_011", "固定回归/core_015", "固定回归/core_023", "固定回归/core_024", "固定回归/core_025", "固定回归/core_028", "固定回归/core_036"],
-  "cross_extra_seeds": ["固定回归/core_023", "固定回归/core_025", "02_人工增量110张/19_非等距密集文字/inc11_cat_lowlight__tiled_irregular.png"],
+  "cross_extra_seeds": ["固定回归/core_023", "固定回归/core_025", "01_快速20张/04_非等距密集文字/inc11_cat_lowlight__tiled_irregular.png"],
   "batch_context": "选择某张图片时，必须连同原基线批次全部成员一起运行；不得缩小同尺寸先验组后直接比较。",
   "protection_note": "保护样本是固定能力哨兵，不等于已经人工确认效果满意；新增满意图和失败图可通过 --cases 增补，不能移除固定保护样本。",
   "release_note": "大范围算法调整、模型或默认参数变更、准备更新默认版本，必须另跑完整检查；局部通过不能 promote。"

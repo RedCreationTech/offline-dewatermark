@@ -297,6 +297,12 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
     from .masks import ink_halo
 
     used: list[RepairName] = []
+    if mask.repair_mode == 'faint_region_uniform_tint':
+        # The candidate carries its measured model on overlay_opacity; the
+        # selectable-coverage threshold (mask_alpha_min) must not gate it.
+        if mask.overlay_opacity is None or float(mask.overlay_opacity.max()) <= 0:
+            return img.copy(), used
+        return _alpha_unmix(img, mask, coverage=mask.overlay_opacity), [RepairName.ALPHA_UNMIX]
     if mask.coverage(thr.mask_alpha_min) <= 0:
         return img.copy(), used
 
