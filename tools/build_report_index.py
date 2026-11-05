@@ -114,10 +114,22 @@ def available_local_links(body, base=None):
     return re.sub(r'<a\b([^>]*)>(.*?)</a>', replace, body, flags=re.S)
 
 
+# 显式分类覆盖：新卡片和存量卡片统一生效（存量卡片优先按此迁移）。
+CATEGORY_OVERRIDES = {
+    '常见水印基线摘要报告': 'control',
+    '常见水印基线明细报告': 'control',
+    '常见水印': 'baseline',
+}
+
+
 def category(value):
+    for kw, cat in CATEGORY_OVERRIDES.items():
+        if kw in value:
+            return cat
     if '完整基线效果总览' in value or '效果分档总览' in value:
         return 'baseline'
-    if any(k in value for k in ('tender-', '方案材料｜', '答辩材料｜', 'proposal/output')):
+    if any(k in value for k in ('tender-', '方案材料｜', '答辩材料｜', 'proposal/output',
+                                '项目现状与开发方向整理')):
         return 'material'
     if any(k in value for k in ('项目防退化控制', '分层防退化检查', '项目整理', '样本移除记录', 'project-control', '空间清理审计', '验收报告')):
         return 'control'
@@ -135,6 +147,28 @@ def card(identifier, group, body):
     return dict(id=identifier, category=group, body=body)
 
 
+def superseded_suffix(path: Path) -> str:
+    """同一封存目录里若存在更新版的摘要/明细报告，返回旧版标注文案，否则空串。"""
+    m_ver = re.match(r'(项目防退化控制(?:摘要|明细)报告)_(\d{8}_\d{4})\.html$', path.name)
+    if not m_ver:
+        return ''
+    if any(p.name.startswith(m_ver.group(1) + '_') and p.name > path.name for p in path.parent.glob('*.html')):
+        return '（旧版，已被更新版修订取代）'
+    return ''
+
+
+def mark_superseded_in_body(body: str) -> str:
+    """存量卡片（从旧总目录继承的条目）里指向已被取代报告的链接，同步补旧版标注。"""
+    def fix(match):
+        href, text = match.group(1), match.group(2)
+        if '已被更新版修订取代' in text:
+            return match.group(0)
+        target = (OUT / unquote(urlsplit(href).path)).resolve()
+        suffix = superseded_suffix(target)
+        return f'<a href="{href}">{text}{suffix}</a>' if suffix else match.group(0)
+    return re.sub(r'<a href="([^"]+)">([^<]*项目防退化控制(?:摘要|明细)报告[^<]*)</a>', fix, body)
+
+
 def original_cards(source):
     # Subsequent rebuilds retain curated explanations and any newly added entries.
     matches = re.findall(r'<article\b([^>]*data-report-entry[^>]*)>(.*?)</article>', source, re.S)
@@ -144,6 +178,14 @@ def original_cards(source):
             ident = re.search(r'\bid="([^"]+)"', attrs).group(1)
             group = re.search(r'\bdata-category="([^"]+)"', attrs).group(1)
             body = re.sub(r'^\s*<span class="tag">.*?</span>', '', body, count=1, flags=re.S)
+            # 兜底修正：存量卡片若仍停在默认“算法实验”分类，且分类规则
+            # 现在能给出更具体的类别（如新增关键词），则迁移过去；
+            # 显式覆盖（CATEGORY_OVERRIDES）对存量卡片同样生效；
+            # 其余已有明确分类的存量卡片不动，保证人工整理结果稳定。
+            rerun = category(unquote(body) + ident)
+            if group == 'experiment' or rerun != group and any(k in (unquote(body) + ident) for k in CATEGORY_OVERRIDES):
+                if rerun != 'experiment':
+                    group = rerun
             result.append(card(ident, group, body))
         # Other report writers may still append ordinary flat sections.
         result.extend(original_cards_legacy(re.sub(r'<section\b[^>]*data-catalog-panel.*?</section>', '', source, flags=re.S)))
@@ -255,6 +297,10 @@ def discover(cards, baseline):
             if stamp:
                 moment = datetime.strptime(stamp.group(1), '%Y%m%d_%H%M%S')
                 title = f'项目防退化控制报告 {moment:%Y-%m-%d %H:%M}'
+        # 同一封存目录里被更新版取代的摘要/明细报告标注旧版，避免误点旧口径。
+        sup = superseded_suffix(path)
+        if sup:
+            title += sup
         if not title or title == '水印验证报告总目录':
             continue
         relative = path.relative_to(OUT).as_posix()
@@ -379,6 +425,7 @@ def main():
     else:
         source = ''  # 首次在本机生成总目录，从空分类起步
     curated = original_cards(source)
+    curated = [dict(item, body=mark_superseded_in_body(item['body'])) for item in curated]
     # 丢弃指向未完整跑完的防退化控制封存的旧条目（半截轮次不是成绩）。
     def links_incomplete_freeze(body: str) -> bool:
         for link in re.findall(r'href="([^"]+)"', body):
@@ -440,11 +487,15 @@ def main():
         from urllib.parse import unquote
         # 只从可见文字取日期，避免 href 里目录名（运行开始时间）干扰标题时间。
         text = re.sub(r'<[^>]+>', ' ', item['body'])
-        match = re.search(r'(20\d{2})[-_年.]?(\d{1,2})[-_月.]?(\d{1,2})(?:[日_ \u3000]+(\d{1,2})[:：](\d{2}))?', text)
+        match = re.search(r'(20\d{2})[-_年.]?(\d{1,2})[-_月.]?(\d{1,2})', text)
         if match:
             try:
-                return dt.datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)),
-                                   int(match.group(4) or 0), int(match.group(5) or 0))
+                # 时间与日期可分离（如"2026-11-04 测试 18:31–19:11"），
+                # 时间单独在全文找第一个 hh:mm。
+                tmatch = re.search(r'(\d{1,2})[:：](\d{2})', text)
+                hh = int(tmatch.group(1)) if tmatch else 0
+                mm = int(tmatch.group(2)) if tmatch else 0
+                return dt.datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)), hh, mm)
             except ValueError:
                 pass
         link = re.search(r'href="([^"]+)"', text)

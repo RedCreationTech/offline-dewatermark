@@ -44,8 +44,8 @@
   $('view-note').textContent=isWorse?`较上次基线退化 ${selected.length} 张，按召回率降幅从大到小排列；每页 ${state.size} 条。`:isBetter?`较上次基线优化 ${selected.length} 张，按召回率升幅从大到小排列；每页 ${state.size} 条。`:isFp?`多选背景占比 >0.2% 共 ${selected.length} 张（带水印样本），按占比从大到小排列；每页 ${state.size} 条。`:`本档 ${selected.length} 条：带水印样本 ${selected.length-negatives} 条，无水印对照 ${negatives} 条；每页 ${state.size} 条。${$('duplicates').checked?'当前保留全部批次记录。':'同图重复批次已合并，默认展示较差档。'}`;
   if($('scope'))$('scope').textContent=`${modeNames[currentMode()]} · 原始记录 ${data.rows.filter(r=>r.mode===currentMode()).length} 条 · 当前口径 ${rows.length} 条${$('negatives').checked?'':' · 已隐藏 '+rows.filter(r=>r.negative).length+' 条无水印对照'}`;
   $('deduplication-note').textContent=presentModes.length>1
-   ?`当前模式在移除指定样本后有 ${data.rows.filter(r=>r.mode===currentMode()).length} 条记录，按“模式＋输入文件哈希＋页码”合并为 ${unique(data.rows.filter(r=>r.mode===currentMode())).length} 个页面。快速20张与增量集重叠；同图批次结果不一致时显示较差档。勾选“显示重复批次记录”可查看当前范围全部批次。PDF与JPG属于不同输入。`
-   :`当前范围在移除指定样本后有 ${data.rows.length} 条记录，按“输入文件哈希＋页码”合并为 ${unique(data.rows).length} 个页面。快速20张与增量集重叠；同图批次结果不一致时显示较差档。勾选“显示重复批次记录”可查看当前范围全部批次。PDF与JPG属于不同输入。`;
+   ?`当前模式在移除指定样本后有 ${data.rows.filter(r=>r.mode===currentMode()).length} 条记录，按“模式＋输入文件哈希＋页码”合并为 ${unique(data.rows.filter(r=>r.mode===currentMode())).length} 个页面。快速集与增量集的内容重复输入已于 2026-11-04 清理；同图多批次记录不一致时显示较差档。勾选“显示重复批次记录”可查看当前范围全部批次。PDF与JPG属于不同输入。`
+   :`当前范围在移除指定样本后有 ${data.rows.length} 条记录，按“输入文件哈希＋页码”合并为 ${unique(data.rows).length} 个页面。快速集与增量集的内容重复输入已于 2026-11-04 清理；同图多批次记录不一致时显示较差档。勾选“显示重复批次记录”可查看当前范围全部批次。PDF与JPG属于不同输入。`;
   tabs.forEach(t=>{const active=t.dataset.bucket===state.bucket;t.setAttribute('aria-selected',String(active));t.tabIndex=active?0:-1;});
   $('effect-panel').setAttribute('aria-labelledby','tab-'+state.bucket);
  }

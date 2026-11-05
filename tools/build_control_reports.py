@@ -59,6 +59,8 @@ GLOSSARY = {
     '笔画补全': '对已确认的重复水印，按方向/行距把被正文遮挡的笔画补回来；只补有证据的残笔。',
     '观察基线': '当前状态的封存记录，包含既有缺陷；是新工作的对照基准，不代表质量合格。',
     '独立验证集': '从未参与调参的锁柜评测集，只在里程碑一次性查看；据其调参即降级。',
+    '历次基线对比': '把每一轮封存的基线按时间排成一张表，横向对比三档页数、多选背景页数、平均召回率和较上轮的退化/优化数量，用于快速看每天测试结果的走向。',
+    '三档': '效果较好 / 一般·待复核 / 问题较多 三个自动初筛档位，由运行错误、负例改动、笔画召回率、非水印区误差决定；多选背景不参与分档。',
 }
 
 LOW_RECALL = 0.3
@@ -258,7 +260,13 @@ def _load_ref_from_pointer(out: Path) -> tuple[str, dict] | tuple[None, None]:
         ptr = json.loads((root / '.regression-control' / 'baseline.json').read_text())
         base = (root / ptr['path']).resolve()
         if base == out.resolve():
-            return None, None  # 基线轮自身不和自己比
+            # 基线指针已指向本轮自身（本轮就是当前基线）：与指针里登记的上轮基线比。
+            prev = ptr.get('previous') or {}
+            if not prev.get('path'):
+                return None, None
+            base = (root / prev['path']).resolve()
+            if base == out.resolve():
+                return None, None  # 上轮也是自己，真没有可比对象
         rec_path = base / '运行记录.json'
         if not rec_path.is_file():
             return None, None
@@ -563,6 +571,117 @@ def build_summary(out: Path, run: dict, a: dict, moment: str) -> Path:
     return dest
 
 
+def _hist_stats(recs: list) -> dict:
+    """一轮封存的汇总口径：有桌面默认记录就只统计桌面默认（与单模式新基线可比），否则全量。"""
+    desk = [r for r in recs if r.get('mode') == 'desktop']
+    rows = [_enrich(r) for r in (desk or recs)]
+    for r in rows:
+        r['_grade'] = _grade(r)
+    paired = [r for r in rows if not r['negative']]
+    neg = [r for r in rows if r['negative']]
+    rc = [r['recall'] for r in paired if r.get('recall') is not None]
+    fp = [r['_fp_frac'] for r in paired if r['_fp_frac'] is not None]
+    high_fp = [r for r in paired if (r['_fp_frac'] or 0) > GOOD_FP_FRAC or (r.get('false_positive_pixels') or 0) > BAD_FP_PX]
+    by_style = {}
+    for r in paired:
+        by_style.setdefault(r.get('style') or '未标注', []).append(r)
+    styles = []
+    for name, xs in by_style.items():
+        src = [x['recall'] for x in xs if x.get('recall') is not None]
+        sfp = [x['_fp_frac'] for x in xs if x['_fp_frac'] is not None]
+        styles.append(dict(name=name, n=len(xs),
+                           good=sum(1 for x in xs if x['_grade'] == 'good'),
+                           warn=sum(1 for x in xs if x['_grade'] == 'warn'),
+                           poor=sum(1 for x in xs if x['_grade'] in ('bad', 'err')),
+                           recall=(sum(src) / len(src)) if src else None,
+                           fp_frac=(sum(sfp) / len(sfp)) if sfp else None))
+    styles.sort(key=lambda s: -s['poor'])
+    return dict(pages=len(rows), paired=len(paired),
+                good=sum(1 for r in rows if r['_grade'] == 'good'),
+                warn=sum(1 for r in rows if r['_grade'] == 'warn'),
+                poor=sum(1 for r in rows if r['_grade'] in ('bad', 'err')),
+                neg=len(neg), neg_safe=sum(1 for r in neg if r['_grade'] == 'good'),
+                high_fp=len(high_fp),
+                recall=(sum(rc) / len(rc)) if rc else None,
+                fp_frac=(sum(fp) / len(fp)) if fp else None,
+                styles=styles)
+
+
+def load_history(out: Path) -> list:
+    """扫描同目录下所有轮次封存（含本轮），汇总每轮的三档/多选/均召回，
+    并逐轮与上一轮同键配对算出退化/优化数量。返回时间倒序（最新在前）的行列表。"""
+    rounds = []
+    for d in sorted(out.parent.glob('*_freeze')):
+        if not (d / '运行记录.json').is_file():
+            continue
+        try:
+            run = json.loads((d / '运行记录.json').read_text())
+            rounds.append(dict(dir=d, run=run, keymap={r['key']: r for r in run.get('records', []) if r.get('key')}))
+        except Exception:
+            continue
+    for i, rd in enumerate(rounds):
+        st = _hist_stats(rd['run'].get('records', []))
+        cmp_c = {'better': None, 'worse': None, 'same': None, 'unpaired': None}
+        if i > 0:
+            prev = rounds[i - 1]['keymap']
+            c = {'better': 0, 'worse': 0, 'same': 0, 'unpaired': 0}
+            for r in rd['run'].get('records', []):
+                if r.get('mode') != 'desktop':
+                    continue  # 统一桌面默认口径，旧三轮封存的另两个模式不参与对比
+                cmp_, _, _ = _compare_rec(r, prev.get(r.get('key')))
+                c[cmp_ if cmp_ in ('better', 'worse', 'same') else 'unpaired'] += 1
+            cmp_c = c
+        rd.update(label=run_moment(rd['run']), stats=st, cmp=cmp_c,
+                  modes=sorted({r.get('mode') for r in rd['run'].get('records', [])}))
+    rounds.reverse()  # 最新在前
+    return rounds
+
+
+def history_html(out: Path) -> str:
+    """明细报告内的“历次基线快速对比”区块：每轮一行（时间/页数/三档/多选/均召回/较上轮退化优化），
+    行内可展开该轮按样式拆分的三档+多选明细。纯静态表格，不依赖 JS。"""
+    e = esc
+    rounds = load_history(out)
+    if len(rounds) < 1:
+        return ''
+    body = []
+    for rd in rounds:
+        st = rd['stats']
+        cur = rd['dir'].resolve() == out.resolve()
+        cmp_c = rd['cmp']
+        if cmp_c['better'] is None:
+            cmp_txt = '<span class="muted">首轮无可比</span>'
+        else:
+            cmp_txt = (f'<span class="bad">退化 {cmp_c["worse"]}</span> / '
+                       f'<span class="good">优化 {cmp_c["better"]}</span> / 持平 {cmp_c["same"]}'
+                       + (f' / 未配对 {cmp_c["unpaired"]}' if cmp_c['unpaired'] else ''))
+        style_rows = ''.join(
+            f'<tr><td>{e(s["name"])}</td><td class="r">{s["n"]}</td>'
+            f'<td class="r good">{s["good"]}</td><td class="r mid">{s["warn"]}</td>'
+            f'<td class="r bad">{s["poor"]}</td><td class="r">{fmt_pct(s["recall"])}</td>'
+            f'<td class="r">{fmt_pct(s["fp_frac"])}</td></tr>' for s in st['styles'])
+        detail = (f'<details class="hist-style"><summary>按样式展开：三档页数 / 均召回 / 均多选占比</summary>'
+                  f'<table><tr><th>水印类型</th><th>页数</th><th>效果较好</th><th>一般/待复核</th>'
+                  f'<th>问题较多</th><th>均笔画召回率</th><th>均多选占比</th></tr>{style_rows}</table></details>')
+        body.append(
+            f'<tr><td><b>{e(rd["label"])}</b>{" · 本轮" if cur else ""}<br>'
+            f'<span class="muted">{len(rd["modes"])} 种模式 · 负例安全 {st["neg_safe"]}/{st["neg"]}</span></td>'
+            f'<td class="r">{st["pages"]}</td>'
+            f'<td class="r good">{st["good"]}<br><span class="muted">带水印 {st["good"] - st["neg_safe"]}</span></td>'
+            f'<td class="r mid">{st["warn"]}</td><td class="r bad">{st["poor"]}</td>'
+            f'<td class="r">{st["high_fp"]}</td>'
+            f'<td class="r">{fmt_pct(st["recall"])}<br><span class="muted">多选均 {fmt_pct(st["fp_frac"])}</span></td>'
+            f'<td>{cmp_txt}{detail}</td></tr>')
+    return ('<details class="history" open><summary><b>' + mark_terms('历次基线对比') + '</b>'
+            f'（{len(rounds)} 轮，最新在前；统一按桌面默认口径统计，旧三轮封存只取桌面默认）</summary>'
+            '<table><tr><th>轮次</th><th>页数</th><th>' + mark_terms('三档') + '·较好</th><th>一般</th><th>问题</th>'
+            '<th>' + mark_terms('多选') + f'&gt;0.2% 页</th><th>' + mark_terms('均笔画召回率') + '</th><th>较上一轮（同键配对）</th></tr>'
+            + ''.join(body) + '</table>'
+            '<p class="muted">口径说明：三档页数含无水印对照（较好档内单列）；“较上一轮”按 输入＋页码 与上一时间轮封存配对，'
+            '旧三轮封存的另两种模式不参与；退化/优化判定容差与页首对比一致（召回 ±3pp、误差 ±5）。'
+            '各轮是各自当时的代码与环境，对比只看走向，不单独归因某次改动。</p></details>')
+
+
 def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
     """明细报告：完全复用《效果分档总览》版式（tools/assets 下的 CSS/JS），
     页首加结论区（测试规模 / 每种类型结果-桌面默认 / 问题最大样式与初步分析）。
@@ -571,6 +690,11 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
     assets = Path(__file__).parent / 'assets'
     css = (assets / 'effect_overview_style.css').read_text()
     app_js = (assets / 'effect_overview_app.js').read_text()
+    # 返回总目录：封存报告在 out/项目防退化控制/<轮次>/ 下，深度两级，按实际路径算相对链接。
+    import os
+    index_path = out.parents[1] / '水印验证报告总目录.html'
+    back_href = quote(os.path.relpath(index_path, out), safe='/') if index_path.is_file() else quote(
+        os.path.relpath(out.parents[1], out), safe='/')
 
     def rel(path: Path) -> str:
         return quote(str(Path(path).relative_to(out)), safe='/')
@@ -706,14 +830,21 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
 .term i {{display:inline-block;width:15px;height:15px;line-height:15px;text-align:center;font-size:10px;font-style:normal;background:#b0761a;color:#fff;border-radius:50%;margin-left:3px;vertical-align:2px}}
 #term-pop {{position:fixed;display:none;max-width:360px;background:#243b46;color:#f2f5f7;font-size:13px;line-height:1.7;padding:14px 18px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.35);z-index:99}}
 #term-pop b {{color:#ffd58a}}
+.history {{background:#fff;border:1px solid #d8e1e8;border-radius:12px;padding:14px 18px;margin:14px 0}}
+.history>summary {{font-size:15px;font-weight:700;cursor:pointer}}
+.history table {{margin:10px 0}}
+.hist-style {{margin:6px 0}}
+.hist-style summary {{font-size:13px;color:#176a4d;cursor:pointer}}
+.hist-style table {{font-size:12.5px}}
 </style></head><body><main class="shell">
-<a class="back" href="../水印验证报告总目录.html">← 返回报告总目录</a>
+<a class="back" href="{back_href}">← 返回报告总目录</a>
 <div class="conclusion">
 <h1>项目防退化控制明细报告 <span style="font-size:15px;color:#7a8a94">{e(moment)}</span></h1>
 <p class="byline">来源：{e(run.get('completed_at') or run.get('created_at'))} 完成的控制运行 · 版式同《效果分档总览》</p>
 {conclusion_html(run, a)}
 <p class="note">三档是自动指标初筛，不是验收结论；专业术语带 <i style="display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;font-size:10px;font-style:normal;background:#b0761a;color:#fff;border-radius:50%">?</i> 的可点击看解释。可发送的单文件摘要在同目录。</p>
 </div>
+{history_html(out)}
 <p class="notice"><strong>三档是自动指标初筛，尚未逐张人工验收。</strong>“效果较好”不等于全部内容恢复正确；像素误差减少不等于水印去除率。无水印对照默认隐藏，勾选后可查看；它们仍用于检查误删，不计作去水印成功。</p>
 {modebar_html}
 <nav class="tabs" role="tablist" aria-label="按去水印效果分类">
