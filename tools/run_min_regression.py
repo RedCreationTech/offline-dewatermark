@@ -48,6 +48,10 @@ def main():
     if args.validate_only:print(json.dumps(checks,ensure_ascii=False,indent=2));return 0
     from wm import documents,pipeline,verdict
     from wm.contract import Thresholds
+    # 桌面默认口径：笔画补全常开（watermark_recall_priority=True）。
+    # 不能用 Thresholds() 裸默认——那是 False，会导致整轮回归与桌面封存基线口径不一致（假性退化）。
+    thr = Thresholds(watermark_recall_priority=True)
+    assert thr.watermark_recall_priority, '固定集回归必须沿用桌面默认口径（笔画补全常开）'
     out=args.out or ROOT/'out/min_regression'/datetime.now().astimezone().strftime('%Y%m%d_%H%M%S_%f')
     out.mkdir(parents=True,exist_ok=False)
     chosen=[r for r in cases if args.suite=='all' or r['suite']==args.suite]
@@ -77,7 +81,7 @@ def main():
         record={k:case[k] for k in ['case_id','label','suite','negative','score_mode','source_group','original_split']};record['pages']=[]
         try:
             # The application gets exactly one input path; no style or truth is passed.
-            processed=pipeline.process_file(args.root/case['paths']['input'],dpi=96)
+            processed=pipeline.process_file(args.root/case['paths']['input'],dpi=96,thr=thr)
             assert len(processed)==case['page_count']
             # Load exact clean references only after source-only inference returns.
             clean_pages=documents.load_pages(args.root/case['paths']['clean'],dpi=96) if case['score_mode']=='paired' else None
@@ -97,7 +101,7 @@ def main():
                     item['clean_preview']=png('clean',clean)
                     score=verdict.build_verdict(source=result.source.image,output=result.output.image,mask=result.mask,
                         engine=result.verdict.engine,repairs=result.verdict.repairs,elapsed_ms=result.verdict.elapsed_ms,
-                        stage_ms=result.verdict.stage_ms,thr=Thresholds(),clean_reference=clean,alpha_reference=alpha)
+                        stage_ms=result.verdict.stage_ms,thr=thr,clean_reference=clean,alpha_reference=alpha)
                     item['passed']=bool(changed==0 and result.mask.coverage()==0) if case['negative'] else bool(score.passed)
                     item['metrics']={k:float(v) if np.isfinite(v) else None for k,v in score.metrics.items()}
                     item['failures']=[str(f) for f in score.failures]
