@@ -95,6 +95,9 @@ class Thresholds:
     # measured opacity rides overlay_opacity because alpha sits below
     # mask_alpha_min by design.
     experimental_faint_region: bool = False
+    # OCR-seeded local stain measurement for sub-threshold small lines (date
+    # stamps) on paper pages; isolated candidate, off by default.
+    experimental_ocr_line_seed: bool = False
 
 
 @dataclass

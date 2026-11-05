@@ -134,6 +134,11 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         # a generic stroke-completion pass would re-expand below-threshold
         # glyphs by guesswork and contaminate the untouched surroundings.
         return mask
+    if mask.repair_mode == 'ocr_seed_stain':
+        # Seed-box measured stain: the per-pixel alpha and its algebraic
+        # inverse are the measured model; generic completion must not
+        # rewrite them or turn the box into an inpainting scope.
+        return mask
     # Keep validated numerical alpha and the corresponding inverse. A search
     # pass must never replace a measured background model with a box inpainter.
     if mask.repair_mode in ('texture_overlay', 'photo_repeat_inverse',
