@@ -33,9 +33,8 @@ def g(t):
     return f'<span class="term">{t}<span class="tip">{GLOSSARY[t]}</span></span>'
 
 
-def main():
-    OUT.mkdir(exist_ok=True)
-    html = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>
+def build_html():
+    return f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>
 <title>本周工作总结与优先项建议（11-02~11-05） {STAMP}</title>
 <style>
 body{{font:15px/1.85 'PingFang SC','Hiragino Sans GB',system-ui,sans-serif;background:#eef2f6;color:#25394e;margin:0;padding:40px 20px}}
@@ -135,6 +134,11 @@ document.addEventListener('click',function(e){{
 document.addEventListener('keydown',function(e){{if(e.key==='Escape')document.querySelectorAll('.term.open').forEach(function(x){{x.classList.remove('open');}});}});
 </script>
 </div></body></html>"""
+
+
+def main():
+    OUT.mkdir(exist_ok=True)
+    html = build_html()
     REPORT.write_text(html, encoding='utf-8')
     print(f'written: {REPORT} ({len(html) / 1024:.0f} KB)')
 

@@ -13,7 +13,8 @@ OUT = ROOT / 'out/周报'
 STAMP = datetime.now().strftime('%Y-%m-%d %H:%M')
 REPORT = OUT / f'周报白话详解_20261102-1105_{datetime.now().strftime("%H%M")}.html'
 
-html = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>
+def build_html():
+    return f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>
 <title>周报白话详解（11-02~11-05） {STAMP}</title>
 <style>
 body{{font:16px/2 'PingFang SC','Hiragino Sans GB',system-ui,sans-serif;background:#eef2f6;color:#25394e;margin:0;padding:40px 20px}}
@@ -103,5 +104,11 @@ strong{{color:#1b3a54}}
 <p class="subtitle" style="margin-top:40px">本文档为个人查看版，未入报告总目录 ｜ 正式版见同目录《本周工作总结与优先项建议》</p>
 </div></body></html>"""
 
-REPORT.write_text(html, encoding='utf-8')
-print(f'written: {REPORT} ({len(html) / 1024:.0f} KB)')
+
+def main():
+    REPORT.write_text(build_html(), encoding='utf-8')
+    print(f'written: {REPORT} ({len(build_html()) / 1024:.0f} KB)')
+
+
+if __name__ == '__main__':
+    main()
