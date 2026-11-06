@@ -441,9 +441,10 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
         if located is None and (wanted("document_overlay") or wanted("chromatic")):
             located = observed_text.shadow_paper(img, observations)
         if located is None and thr.experimental_ocr_line_seed:
-            # OCR-read small lines on paper pages (date stamps): the box is
-            # search scope only, the mask comes from measured stain evidence
-            # in the box neighbourhood. Isolated candidate, default off.
+            # OCR-read date/time-like lines on paper pages (date stamps): the
+            # box is search scope only, the mask comes from measured stain
+            # evidence in the box neighbourhood. Default-on since 2026-11-05
+            # (dev + regression + independent v1 validated); self-declining.
             from . import ocr_seed_stain
             located = ocr_seed_stain.estimate(img, observations, thr)
         if located is not None:

@@ -16,7 +16,9 @@ document_overlay 只靠对比度、看不见 α≈0.01–0.02 的亚阈值染色
 - 不做闭运算/填洞/凸包：掩码沿实测笔画分布，字内空洞与字间空白保持；
 - 修复是确定性代数逆变换（veil s=0, t=Ŵ），逐像素改动受染色量约束。
 
-默认路径不触发：仅 Thresholds.experimental_ocr_line_seed=True 运行。
+默认路径触发（2026-11-05 转正）：开关 experimental_ocr_line_seed 默认
+True；通道只在 OCR 读出日期/时间样式行、且框内实测证据全部达标时动手，
+否则自动放弃、页面与原流程逐字节一致。样式锁 corner_id/dot_grid 下不运行。
 """
 from __future__ import annotations
 

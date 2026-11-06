@@ -96,8 +96,12 @@ class Thresholds:
     # mask_alpha_min by design.
     experimental_faint_region: bool = False
     # OCR-seeded local stain measurement for sub-threshold small lines (date
-    # stamps) on paper pages; isolated candidate, off by default.
-    experimental_ocr_line_seed: bool = False
+    # stamps) on paper pages. Default ON since 2026-11-05: validated on the
+    # dev set, 47-page regression (byte-identical everywhere it declines) and
+    # independent set v1 (61/61 zero-impact, xdoc_002 recall 0→1.000).
+    # It self-declines unless an OCR-read date/time-like line on a paper page
+    # passes the measured-evidence gates; set False to disable.
+    experimental_ocr_line_seed: bool = True
 
 
 @dataclass

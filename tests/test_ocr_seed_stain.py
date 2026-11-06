@@ -98,13 +98,19 @@ class OcrSeedStainTests(unittest.TestCase):
         # 选区允许含抗锯齿边缘（比理想笔画粗），但不得整框填充（>1.8×理想笔画）
         self.assertLess(float(sel.sum()), 1.8 * float(gt.sum()))
 
-    def test_default_cascade_does_not_trigger(self):
-        img, _gt, box, text = _page()
-        lines = [(box, text, 0.9)]
-        mask = estimate_single_page(img, style='corner_id')  # 默认/其他样式：不触发
-        self.assertNotEqual(mask.method, 'ocr_seed_stain')
-        mask2 = ocr_seed_stain.estimate(img, _with_body(box, text))  # 直接调用：触发
-        self.assertEqual(mask2.method, 'ocr_seed_stain')
+    def test_default_cascade_triggers_by_default(self):
+        # 默认路径（2026-11-05 转正后）：真实 OCR 读出时间戳行时通道自动生效。
+        # 合成页用较浓的戳（α=0.18），保证 RapidOCR 真能读出该行。
+        img, _gt, _box, _text = _page(stamp_alpha=0.18)
+        mask = estimate_single_page(img, thr=Thresholds())
+        self.assertEqual(mask.method, 'ocr_seed_stain')
+        # 显式关闭开关：不触发
+        mask_off = estimate_single_page(
+            img, thr=Thresholds(experimental_ocr_line_seed=False))
+        self.assertNotEqual(mask_off.method, 'ocr_seed_stain')
+        # 锁定其他样式（corner_id）：该通道不参与，不触发
+        mask2 = estimate_single_page(img, style='corner_id')
+        self.assertNotEqual(mask2.method, 'ocr_seed_stain')
 
     def test_recall_expand_leaves_measured_model_alone(self):
         img, _gt, box, text = _page()
