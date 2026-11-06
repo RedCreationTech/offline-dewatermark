@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>方案材料｜离线智能去水印 · 从零配置到启动（2026-11-06）</title><style>
+:root{color-scheme:light;--bg:#f4f5f0;--paper:#fff;--ink:#162b26;--muted:#485d54;--line:#d9e1d8;
+  --green:#12624d;--tint:#eaf3e9;--dark:#153e34}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.68 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+main{width:min(1080px,calc(100% - 44px));margin:32px auto 46px}
+header{padding:33px 38px;background:linear-gradient(110deg,#143b31,#205848);color:white;border-radius:16px}
+h1,h2,h3,p{margin:0}h1{font-size:clamp(1.9rem,4.7vw,2.9rem);line-height:1.25;margin:10px 0}
+.kicker{font-size:.8rem;color:#d7eee0;letter-spacing:.09em}header p{color:#edf6f0;max-width:50rem}
+nav{display:flex;flex-wrap:wrap;gap:6px 16px;margin:15px 0 24px;font-size:.88rem}
+a{color:var(--green);text-underline-offset:.17em}a:focus-visible,button:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+section{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:22px 25px;margin:13px 0}
+h2{font-size:1.35rem;line-height:1.4;margin-bottom:8px}h3{font-size:1rem;margin:16px 0 4px}
+section p+p{margin-top:8px}ul{margin:8px 0;padding-left:1.35em}li+li{margin-top:4px}
+.num{color:var(--green);font-variant-numeric:tabular-nums;margin-right:.5rem}.note{background:var(--tint);
+  border-left:3px solid #6ba387;padding:9px 12px;margin-top:11px;font-size:.92rem}
+.small,.refs{color:var(--muted);font-size:.9rem}.refs{margin-top:10px}
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.commands{min-width:0;margin:11px 0}.cmd-title{font-size:.83rem;font-weight:700;color:var(--dark);margin-bottom:3px}
+pre{margin:0;padding:12px 14px;overflow:auto;background:#142c26;color:#f0f8f2;border-radius:8px;line-height:1.55}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.84em}
+p code,li code,td code{background:var(--tint);padding:1px 3px;overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.91rem}
+td,th{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--tint)}td:last-child{color:var(--muted)}
+.term{white-space:nowrap}.help{display:inline-grid;place-items:center;vertical-align:middle;width:1.65rem;height:1.65rem;
+  padding:0;border:0;border-radius:5px;background:transparent;font:inherit;font-size:.8rem;cursor:pointer}
+.help:hover,.help[aria-expanded="true"]{background:var(--tint)}
+.tooltip{position:fixed;z-index:2;width:min(19rem,calc(100vw - 24px));padding:11px 13px;background:var(--dark);
+  color:white;border-radius:8px;box-shadow:0 6px 18px #142e2330;font-size:.86rem}
+.tooltip[hidden]{display:none}footer{margin:18px 0;color:var(--muted);font-size:.85rem}
+@media(max-width:720px){main{width:calc(100% - 26px);margin:14px auto 28px}header{padding:21px}
+  section{padding:15px}.pair{grid-template-columns:1fr;gap:0}}
+@media print{main{width:100%;margin:0}body{background:white}header{background:#eaf3e9;color:var(--ink)}
+  header p,.kicker{color:var(--ink)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eee;color:#111}
+  .help,nav{display:none}h2,h3{break-after:avoid}}
+</style></head>
+<body><main>
+<header><div class="kicker">开发机配置手册 · <time datetime="2026-11-06">2026-11-06</time></div>
+<h1>离线智能去水印 · 从零配置到启动</h1>
+<p>先启动现有桌面程序，跑通自动处理和手动选区，再准备 WeVisOne-VL-2B 的独立实验环境，验证用提示词找到指定水印。</p></header>
+<nav aria-label="文档目录">
+  <a href="#assistant">交给本机 AI</a><a href="#tools">基础工具</a><a href="#source">取得代码</a><a href="#install">安装依赖</a>
+  <a href="#resources">放置资源</a><a href="#launch">启动与检查</a>
+  <a href="#wevis">WeVisOne 2B</a><a href="#handoff">开发交接</a>
+</nav>
+
+<section id="assistant"><h2>交给本机 AI 执行</h2>
+<p>在新电脑上打开这份 HTML，把文件交给本机已安装的 AI 助手，再发送下面这段指令。</p>
+<div class="commands"><p class="cmd-title">可复制的配置指令</p><pre><code>请按这份文档在本机配置离线智能去水印项目。先检查操作系统和已经安装的工具，
+选择对应的命令，用 HTTPS 地址克隆仓库。按项目依赖清单建立环境，放置并校验数据和模型，
+启动桌面程序，完成单图自测。然后按文档准备 WeVisOne-VL-2B 的独立环境并验证单图分割。
+沿用仓库的技术栈和启动入口。需要我登录、确认系统安装或提供团队数据时，请告诉我具体要做什么。
+完成后请列出代码版本、实际通过的检查，以及仍待处理的事项。</code></pre></div>
+</section>
+
+<section id="tools"><h2><span class="num">01</span>准备基础工具</h2>
+<p>按 Windows 或 macOS 选一组命令。主程序沿用 Python、PySide6、OpenCV 和 <span class="term">ONNX Runtime<button type="button" class="help" data-term="ort" aria-label="解释ONNX Runtime" aria-controls="term-panel" aria-expanded="false">❓</button></span>，项目版本以团队指定的 Git 提交为准。初次取代码、安装依赖和下载资源需要联网。</p>
+<ul>
+  <li><strong>Windows x64 示例</strong>。安装 Git for Windows、64 位 Python 3.14 和 Microsoft Visual C++ x64 运行库。执行 <code>git --version</code> 和 <code>py -3.14 -V</code> 确认安装。</li>
+  <li><strong>macOS 14 或以上 · Apple 芯片示例</strong>。在「终端」执行 <code>git --version</code>；若没有 Git，执行 <code>xcode-select --install</code> 安装命令行工具。安装 Python 3.14 后执行 <code>python3.14 -V</code>，并用 <code>uname -m</code> 确认终端架构为 <code>arm64</code>。</li>
+</ul>
+<p class="refs"><a href="https://gitforwindows.org/">Git for Windows</a> · <a href="https://www.python.org/downloads/windows/">Python Windows 安装页</a> · <a href="https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist">微软运行库</a> · <a href="https://developer.apple.com/documentation/xcode/installing-the-command-line-tools">Apple 命令行工具</a> · <a href="https://www.python.org/downloads/macos/">Python macOS 安装页</a></p></section>
+
+<section id="source"><h2><span class="num">02</span>从团队仓库取得代码</h2>
+<p>使用项目的 HTTPS 地址克隆。若 GitHub 提示需要权限，使用有仓库访问权限的团队账号完成认证。</p>
+<div class="commands"><p class="cmd-title">Windows PowerShell / macOS 终端 · 进入项目根目录并记录代码版本</p><pre><code>git clone https://github.com/RedCreationTech/offline-dewatermark.git
+cd offline-dewatermark
+git rev-parse --short HEAD</code></pre></div>
+<p class="small">若团队指定分支或提交，切换后再安装依赖。从这一步起，除非另有说明，命令都在 README.md 所在目录执行。</p>
+</section>
+
+<section id="install"><h2><span class="num">03</span>安装桌面程序依赖</h2>
+<p>在目标电脑新建 <span class="term">虚拟环境<button type="button" class="help" data-term="venv" aria-label="解释虚拟环境" aria-controls="term-panel" aria-expanded="false">❓</button></span>，先按仓库的精确锁定清单安装。每次新开终端时，重新设置 Windows 的 <code>$py</code> 或 macOS 的 <code>py</code> 变量。</p>
+<div class="pair"><div class="commands"><p class="cmd-title">Windows PowerShell</p><pre><code>$env:PYTHONUTF8 = &quot;1&quot;
+py -3.14 -m venv .venv
+$py = &quot;.\.venv\Scripts\python.exe&quot;
+&amp; $py -m pip install --upgrade pip
+&amp; $py -m pip install -r requirements.lock
+&amp; $py -m pip check</code></pre></div><div class="commands"><p class="cmd-title">macOS 终端</p><pre><code>python3.14 -m venv .venv
+py=.venv/bin/python
+&quot;$py&quot; -m pip install --upgrade pip
+&quot;$py&quot; -m pip install -r requirements.lock
+&quot;$py&quot; -m pip check</code></pre></div></div>
+<p class="note">若无法按锁定清单安装，可在新建的干净环境中把安装命令末尾改成 <code>-r requirements.txt</code>，并记录报错和实际版本。两份清单都失败时，先核对 Python 版本、系统架构和缺失包。</p>
+<p class="small">两套步骤都直接用 Python 模块入口，PySide6 随依赖清单安装。</p>
+<p class="refs"><a href="https://doc.qt.io/qtforpython-6/gettingstarted.html">Qt for Python 安装说明</a></p></section>
+
+<section id="resources"><h2><span class="num">04</span>下载、校验并放置资源</h2>
+<p>从项目 Release 下载两个数据包、一个模型包和 <code>SHA256SUMS.txt</code>，放在仓库同级的 <code>wm-resources</code> 目录。核对校验值后，将三个 ZIP 分别解压到同一个空白项目根目录。</p>
+<p class="refs"><a href="https://github.com/RedCreationTech/offline-dewatermark/releases/tag/resources-2026-10-27">项目资源 Release</a> · <a href="https://github.com/RedCreationTech/offline-dewatermark/releases/download/resources-2026-10-27/SHA256SUMS.txt">校验值文件</a></p>
+<div class="pair"><div class="commands"><p class="cmd-title">Windows PowerShell · 第 2 行输出需和校验值文件比对</p><pre><code>$download = &quot;..\wm-resources&quot;
+Get-FileHash &quot;$download\*.zip&quot; -Algorithm SHA256
+Expand-Archive &quot;$download\data_bundle_part1_of2.zip&quot; -DestinationPath . -Force
+Expand-Archive &quot;$download\data_bundle_part2_of2.zip&quot; -DestinationPath . -Force
+Expand-Archive &quot;$download\model_bundle.zip&quot; -DestinationPath . -Force</code></pre></div>
+<div class="commands"><p class="cmd-title">macOS 终端 · 首行校验通过后再执行解压</p><pre><code>(cd ../wm-resources &amp;&amp; shasum -a 256 -c SHA256SUMS.txt)
+unzip -o ../wm-resources/data_bundle_part1_of2.zip -d .
+unzip -o ../wm-resources/data_bundle_part2_of2.zip -d .
+unzip -o ../wm-resources/model_bundle.zip -d .</code></pre></div></div>
+<table aria-label="项目目录和资源">
+  <thead><tr><th scope="col">资源</th><th scope="col">放置位置或用途</th></tr></thead>
+  <tbody>
+    <tr><td><code>data_bundle_part1_of2.zip</code>、<code>data_bundle_part2_of2.zip</code></td><td>合并为根目录下的 <code>data/</code>。两份都是普通 ZIP。</td></tr>
+    <tr><td><code>model_bundle.zip</code></td><td>解压为 <code>models/</code>。确认有 <code>models/inpainting_lama_2025jan.onnx</code>。</td></tr>
+    <tr><td>最新固定测试集与应用测试图</td><td>从团队当前工作机或备份取得相匹配的 <code>data/</code>。提示词首轮还需准备此前的 9 张斜向平铺文字图。</td></tr>
+  </tbody>
+</table>
+<p class="note">Release 是 10 月 27 日的数据快照。若要对当前代码执行固定集校验，需要同步团队现行数据及其清单。若校验不通过，先核对数据来源和版本。</p>
+</section>
+
+<section id="launch"><h2><span class="num">05</span>离线启动并验证现有功能</h2>
+<p>主程序先用项目默认的 CPU 路径启动。下面先检查依赖、磁盘上的 <span class="term">LaMa<button type="button" class="help" data-term="lama" aria-label="解释LaMa" aria-controls="term-panel" aria-expanded="false">❓</button></span> 权重和模型加载，再打开桌面程序。输入路径含空格或中文时用引号包住。</p>
+<div class="pair"><div class="commands"><p class="cmd-title">Windows PowerShell</p><pre><code>$env:HF_HUB_OFFLINE = &quot;1&quot;
+&amp; $py -c &quot;import numpy, cv2, fitz, PySide6, onnxruntime; from pathlib import Path; from wm import lama; p=Path(&#x27;models/inpainting_lama_2025jan.onnx&#x27;); assert p.is_file(), p; assert lama.is_available(), &#x27;LaMa load failed&#x27;; print(&#x27;app dependencies and local LaMa OK&#x27;)&quot;
+&amp; $py -m wm.app</code></pre></div><div class="commands"><p class="cmd-title">macOS 终端</p><pre><code>export HF_HUB_OFFLINE=1
+&quot;$py&quot; -c &quot;import numpy, cv2, fitz, PySide6, onnxruntime; from pathlib import Path; from wm import lama; p=Path(&#x27;models/inpainting_lama_2025jan.onnx&#x27;); assert p.is_file(), p; assert lama.is_available(), &#x27;LaMa load failed&#x27;; print(&#x27;app dependencies and local LaMa OK&#x27;)&quot;
+&quot;$py&quot; -m wm.app</code></pre></div></div>
+<p>窗口打开后导入一张测试图，执行一次自动识别与修复，检查结果；然后用画笔补一处选区、用橡皮擦撤回一处，重新修复并确认预览。留一张原图与导出结果作为本机验证记录。</p>
+<h3>固定数据校验和单图启动自测</h3>
+<p class="small">固定集准备好后运行第一条。第二条执行一张内置样本的无窗口处理，成功时会输出 <code>smoke ok</code>。</p>
+<div class="pair"><div class="commands"><p class="cmd-title">Windows PowerShell</p><pre><code>&amp; $py tools/run_min_regression.py --validate-only
+$env:QT_QPA_PLATFORM = &quot;offscreen&quot;
+&amp; $py -m wm.app --smoke
+Remove-Item Env:QT_QPA_PLATFORM</code></pre></div><div class="commands"><p class="cmd-title">macOS 终端</p><pre><code>&quot;$py&quot; tools/run_min_regression.py --validate-only
+QT_QPA_PLATFORM=offscreen &quot;$py&quot; -m wm.app --smoke</code></pre></div></div>
+<p class="small">若检查找不到 LaMa，先确认没有多套一层解压目录。中文合成样本缺字时，按仓库说明设置 <code>WM_FONTS_DIR</code>；重建原语料时保留原字体。</p>
+</section>
+
+<section id="wevis"><h2><span class="num">06</span>准备 WeVisOne-VL-2B 提示词实验</h2>
+<p>这套环境用于单图定位和掩码实验。此前记录的模型权重约 4.9 GB，另需预留 PyTorch 依赖、下载缓存与实验结果的空间。主程序和模型实验分别使用 Python 3.14 和 Python 3.12，避免项目与上游不同的 NumPy 版本装到同一环境。</p>
+<div class="commands"><p class="cmd-title">Windows PowerShell / macOS 终端 · 获取此前实验使用的上游源码版本</p><pre><code>git clone https://github.com/Tencent/WeVisOne-VL.git out/third_party/WeVisOne-VL
+git -C out/third_party/WeVisOne-VL checkout 9a6bcd85404505df0d05cfb5d97512ccacf35dee</code></pre></div>
+<p class="small">先从本机系统对应的 Python 下载页安装 Python 3.12，与主程序的 Python 3.14 并存。</p>
+<div class="pair"><div class="commands"><p class="cmd-title">Windows PowerShell · 创建模型环境</p><pre><code>py -3.12 -m venv out\third_party\WeVisOne-VL\.venv
+$wv = &quot;.\out\third_party\WeVisOne-VL\.venv\Scripts\python.exe&quot;</code></pre></div>
+<div class="commands"><p class="cmd-title">macOS 终端 · 创建模型环境</p><pre><code>python3.12 -m venv out/third_party/WeVisOne-VL/.venv
+wv=out/third_party/WeVisOne-VL/.venv/bin/python</code></pre></div></div>
+<h3>安装 PyTorch 并下载完整权重</h3>
+<p>Windows 如有 NVIDIA 显卡，先安装匹配的驱动。左列用官方 <span class="term">CUDA<button type="button" class="help" data-term="cuda" aria-label="解释CUDA" aria-controls="term-panel" aria-expanded="false">❓</button></span> 12.8 构建举例，显卡或驱动需要其他构建时，按官方表选择同版本的 PyTorch 和 torchvision。macOS 列按此前 Apple 芯片上跑过的 CPU 路径准备。逐条执行，确认成功再继续。</p>
+<div class="pair"><div class="commands"><p class="cmd-title">Windows PowerShell · NVIDIA GPU 示例</p><pre><code>$env:HF_HUB_OFFLINE = &quot;0&quot;
+nvidia-smi
+&amp; $wv -m pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+&amp; $wv -c &quot;import torch; assert torch.cuda.is_available(), &#x27;CUDA unavailable&#x27;; print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0)); print((torch.ones(4, device=&#x27;cuda&#x27;) * 2).tolist())&quot;
+&amp; $wv -m pip install -e &quot;out/third_party/WeVisOne-VL&quot;
+&amp; $wv -m pip check
+&amp; $wv -c &quot;from huggingface_hub import snapshot_download; snapshot_download(&#x27;tencent/WeVisOne-VL-2B&#x27;, revision=&#x27;fcf8c8ca7fa481b514005ef591c8b72bed39618a&#x27;, local_dir=&#x27;models/WeVisOne-VL-2B&#x27;)&quot;</code></pre></div>
+<div class="commands"><p class="cmd-title">macOS 终端 · CPU 示例</p><pre><code>export HF_HUB_OFFLINE=0
+&quot;$wv&quot; -m pip install torch==2.11.0 torchvision==0.26.0
+&quot;$wv&quot; -c &quot;import torch; print(torch.__version__)&quot;
+&quot;$wv&quot; -m pip install -e &quot;out/third_party/WeVisOne-VL&quot;
+&quot;$wv&quot; -m pip check
+&quot;$wv&quot; -c &quot;from huggingface_hub import snapshot_download; snapshot_download(&#x27;tencent/WeVisOne-VL-2B&#x27;, revision=&#x27;fcf8c8ca7fa481b514005ef591c8b72bed39618a&#x27;, local_dir=&#x27;models/WeVisOne-VL-2B&#x27;)&quot;</code></pre></div></div>
+<p class="small">Windows 的显卡验证命令应打印显卡名和四个 <code>2.0</code>。两套环境的模型目录都应包含 <code>model.safetensors</code>、<code>mask_decoder.pt</code> 和配套配置。通过上游基础安装使用 Transformers。</p>
+<p class="refs"><a href="https://www.nvidia.com/en-us/drivers/">NVIDIA 驱动</a> · <a href="https://pytorch.org/get-started/previous-versions/">PyTorch 版本安装表</a> · <a href="https://github.com/Tencent/WeVisOne-VL">腾讯官方源码</a> · <a href="https://huggingface.co/tencent/WeVisOne-VL-2B">腾讯官方权重</a></p>
+<h3>先用上游样图验证离线掩码</h3>
+<p>把下方代码以 UTF-8 保存为项目根目录的 <code>out/试跑_wevisone.py</code>。它用提示词 <code>sofa</code> 跑上游示例，检查能否加载本地权重并输出<span class="term">掩码<button type="button" class="help" data-term="mask" aria-label="解释掩码" aria-controls="term-panel" aria-expanded="false">❓</button></span>。如需复跑，把脚本里的输出目录换成新名称。</p>
+<div class="commands"><p class="cmd-title">Python · 单图分割自测</p><pre><code>from pathlib import Path
+import sys
+
+import torch
+from PIL import Image
+from wevisone_vl import WeVisOneVL
+from wevisone_vl.visualization import save_result
+
+source = Path(&quot;out/third_party/WeVisOne-VL/demo/examples/images/livingroom.jpg&quot;)
+output = Path(&quot;out/WeVisOne环境检查_01&quot;)
+output.mkdir(exist_ok=False)
+
+image = Image.open(source).convert(&quot;RGB&quot;)
+device = sys.argv[1]
+dtype = &quot;float32&quot;
+if device == &quot;cuda:0&quot;:
+    dtype = &quot;bfloat16&quot; if torch.cuda.is_bf16_supported() else &quot;float16&quot;
+model = WeVisOneVL(&quot;models/WeVisOne-VL-2B&quot;, backend=&quot;transformers&quot;, device=device, dtype=dtype)
+result = model.predict(image, task=&quot;segmentation&quot;, query=&quot;sofa&quot;)
+save_result(output, image, result)
+print(&quot;mask_count =&quot;, len(result.masks))</code></pre></div>
+<div class="pair"><div class="commands"><p class="cmd-title">Windows PowerShell · 断开模型联网下载</p><pre><code>$env:HF_HUB_OFFLINE = &quot;1&quot;
+&amp; $wv out/试跑_wevisone.py cuda:0</code></pre></div><div class="commands"><p class="cmd-title">macOS 终端 · 断开模型联网下载</p><pre><code>HF_HUB_OFFLINE=1 &quot;$wv&quot; out/试跑_wevisone.py cpu</code></pre></div></div>
+<p>打开 <code>out/WeVisOne环境检查_01/overlay.png</code> 和 <code>masks/</code>，确认沙发选区可见。然后用同一入口换成项目首张斜向文字图与水印描述，逐张记录漏选、误选与字洞。选区通过检查后，再接入按掩码修复和桌面入口。</p>
+</section>
+
+<section id="handoff"><h2><span class="num">07</span>新机器的交接检查</h2>
+<ul>
+  <li>保存项目提交、依赖版本、数据来源与校验结果。离线换机时提前准备目标系统的 Python 安装包、依赖包和本地权重。</li>
+  <li>确认桌面程序能自动处理，也能按画笔调整后的选区修复。固定集校验和单图自测分别记录。</li>
+  <li>确认 WeVisOne 能用本地权重输出选区，再进入提示词去水印开发。后续把样本按自动即可、提示词可处理、画笔细修三类整理。</li>
+</ul>
+<p class="note">Windows 搭配 NVIDIA 显卡时，可另行验证 LaMa 的 GPU 路径。在独立环境里按官方兼容表准备 GPU 版 ONNX Runtime 与运行库，再设置 <code>WM_LAMA_CUDA=1</code>。以 LaMa 会话的实际执行后端及单图结果为准。</p>
+<p class="refs"><a href="https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html">ONNX Runtime GPU 兼容说明</a></p>
+</section>
+<footer>编制依据 · 项目 README、依赖清单、启动脚本、资源放置说明与 WeVisOne 官方文档。当前工作机已验证固定集校验、离线 LaMa 加载和单图自测；目标机的安装、桌面显示与 GPU 推理以实机结果为准。</footer>
+</main>
+<div id="term-panel" class="tooltip" role="tooltip" aria-live="polite" hidden></div>
+<script id="terms" type="application/json">{"venv": ["虚拟环境", "给一个项目单独安装 Python 依赖的目录。主程序和模型实验各建一套，避免版本互相影响。"], "ort": ["ONNX Runtime", "主程序用它运行 LaMa 修复模型。是否使用 GPU 取决于运行包、驱动和实际加载结果。"], "lama": ["LaMa", "现有修复模型，用于重建选区内的图像内容。"], "mask": ["掩码", "记录原图中哪些像素被选中的图。这里先验证模型能否生成掩码，再单独验证按选区修复的效果。"], "cuda": ["CUDA", "NVIDIA 的 GPU 计算环境。驱动识别显卡后，还要验证所装的 PyTorch 能实际在显卡上运算。"]}</script>
+<script>
+const panel = document.querySelector('#term-panel');
+const terms = JSON.parse(document.querySelector('#terms').textContent);
+let active;
+function closePanel() {
+  if (active) active.setAttribute('aria-expanded', 'false');
+  active = null;
+  panel.hidden = true;
+}
+document.addEventListener('click', event => {
+  const button = event.target.closest('button[data-term]');
+  if (panel.contains(event.target)) return;
+  const same = button === active;
+  closePanel();
+  if (!button || same) return;
+  active = button;
+  active.setAttribute('aria-expanded', 'true');
+  panel.textContent = terms[button.dataset.term][1];
+  panel.hidden = false;
+  const anchor = button.getBoundingClientRect();
+  const left = Math.max(12, Math.min(anchor.left, innerWidth - panel.offsetWidth - 12));
+  const below = anchor.bottom + 8;
+  const top = below + panel.offsetHeight <= innerHeight - 12
+    ? below : Math.max(12, anchor.top - panel.offsetHeight - 8);
+  panel.style.left = left + 'px';
+  panel.style.top = top + 'px';
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closePanel();
+});
+window.addEventListener('scroll', closePanel);
+window.addEventListener('resize', closePanel);
+</script>
+</body></html>
