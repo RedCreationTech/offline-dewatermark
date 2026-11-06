@@ -54,6 +54,8 @@ Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），�
 
 本机已有观察基线时继续沿用；首次在其他机器建立基线使用 `./start.sh freeze-baseline`，它只记录现状，包括缺陷。规则见 [放行门槛](config/regression_control.json) 与 [分层范围](config/regression_tiers.json)。数据、模型和可比较基线缺失时不能宣称验收完成。
 
+有 NVIDIA 显卡的机器可在任意子命令后加 `--gpu`：LaMa 走 `WM_LAMA_CUDA=1` 的 CUDA 路径，WeVisOne 分割探针用 `cuda:0`。示例：`./start.sh gui --gpu`（或 `start.bat gui --gpu`）；`./start.sh wevisone --gpu [提示词] [图片]` 单独跑 WeVisOne 单图分割探针（默认 cpu），输出到 `out/WeVisOne环境检查_NN`。
+
 `check-data` 只证明清单校验通过；固定集诊断、工程测试及局部实验不能替代完整发布放行或独立验证。桌面默认、关闭笔画补全和 CLI 默认的参数不同，比较时应记录。
 
 纸面彩色阴影文字分层反解已在 2026-10-29 接入默认处理；表格残影、正常彩色内容保护和耗时问题仍未解决。部分照片和淡字存在漏检，正文、数字、纹理可能受损；无可靠参考时保持待复核，不将未知质量计为成功。已有实验细节保留在本地报告中，实际行为以长期流程说明和源码为准。

@@ -9,6 +9,8 @@
 #   .\start.ps1 control ...  防退化控制工具（resume/compare/promote 等）
 #   .\start.ps1 check-data   校验固定回归集，不运行模型
 #   .\start.ps1 gui [文件]   启动桌面前端
+#   .\start.ps1 wevisone [--gpu] [query] [image]  单图分割探针（默认 cpu，--gpu 走 cuda:0）
+#   任意子命令后加 --gpu     LaMa 走 WM_LAMA_CUDA=1，WeVisOne 走 cuda:0
 #   .\start.ps1 eval         仅跑固定核心回归集
 #   .\start.ps1 report       显示最近一次最小回归报告路径
 # 若提示“禁止运行脚本”，可用 powershell -ExecutionPolicy Bypass -File .\start.ps1 <子命令>
@@ -170,6 +172,15 @@ $sub = 'test'
 $rest = @($args)
 if ($rest.Count -gt 0) { $sub = $rest[0]; $rest = $rest[1..($rest.Count - 1)] }
 
+# --gpu 标志（可出现在任意位置）：LaMa 用 WM_LAMA_CUDA=1，WeVisOne 用 cuda:0
+$Device = 'cpu'
+$kept = @()
+foreach ($a in $rest) {
+    if ($a -eq '--gpu') { $Device = 'cuda:0'; $env:WM_LAMA_CUDA = '1' } else { $kept += $a }
+}
+$rest = $kept
+if ($env:WM_LAMA_CUDA -eq '1') { Say "GPU 模式：LaMa 使用 WM_LAMA_CUDA=1，WeVisOne 使用 cuda:0" }
+
 switch ($sub) {
     'setup'  { Invoke-Setup }
     'eval'   { Invoke-Setup; Invoke-Eval }
@@ -194,9 +205,15 @@ switch ($sub) {
         $env:HF_HUB_OFFLINE = '1'; $env:QT_QPA_PLATFORM = 'offscreen'
         & $VenvPython tools/regression_control.py @rest
     }
+    'wevisone' {
+        $wvPy = 'out/third_party/WeVisOne-VL/.venv/Scripts/python.exe'
+        if (-not (Test-Path $wvPy)) { Die 'WeVisOne 环境未安装，请先按配置文档第 06 节准备 out/third_party/WeVisOne-VL' }
+        $env:HF_HUB_OFFLINE = '1'
+        & $wvPy out/试跑_wevisone.py $Device @rest
+    }
     'report'     { Invoke-Report }
     'check-data' { & $VenvPython tools/run_min_regression.py --validate-only }
     'gui'        { Invoke-Gui }
-    default      { Die "未知子命令：$sub（可用：setup/check-data/eval/test/test-release/freeze-baseline/control-inventory/control/report/gui）" }
+    default      { Die "未知子命令：$sub（可用：setup/check-data/eval/test/test-release/freeze-baseline/control-inventory/control/report/gui/wevisone）" }
 }
 exit $LASTEXITCODE
