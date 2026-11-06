@@ -38,24 +38,31 @@ def main():
     html = f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"/>
 <title>本周工作总结与优先项建议（11-02~11-05） {STAMP}</title>
 <style>
-body{{font:15px/1.85 system-ui,'PingFang SC',sans-serif;background:#f1f4f8;color:#25394e;margin:0;padding:26px;max-width:1150px}}
-h1{{font-size:22px}} h2{{font-size:17px;border-left:4px solid #2c6e9b;padding-left:10px;margin-top:30px}}
-table{{border-collapse:collapse;background:#fff;width:100%;font-size:14px;margin:12px 0}}
-td,th{{border:1px solid #d5dfe8;padding:7px 11px;text-align:left;vertical-align:top}} th{{background:#eef3f8}}
-.note{{background:#fff8e6;border:1px solid #e8d9a0;border-radius:8px;padding:11px 16px;font-size:14px}}
-.warn{{background:#fdecea;border:1px solid #e6b0aa;border-radius:8px;padding:11px 16px;font-size:14px}}
-.good{{background:#eafaf1;border:1px solid #b7e4c7;border-radius:8px;padding:11px 16px;font-size:14px}}
-.ok{{color:#1c7a4d;font-weight:600}} .bad{{color:#c0392b;font-weight:600}} code{{background:#eef1f4;padding:1px 5px;border-radius:4px;font-size:13px}}
-.meta{{color:#7a8a94;font-size:13px}}
+body{{font:15px/1.85 'PingFang SC','Hiragino Sans GB',system-ui,sans-serif;background:#eef2f6;color:#25394e;margin:0;padding:40px 20px}}
+.wrap{{max-width:960px;margin:0 auto;background:#fff;border-radius:14px;box-shadow:0 2px 18px rgba(30,60,90,.08);padding:44px 52px;box-sizing:border-box}}
+h1{{font-size:24px;text-align:center;margin:6px 0 4px;color:#1b3a54;letter-spacing:.5px}}
+.subtitle{{text-align:center;color:#7a8a94;font-size:13.5px;margin-bottom:26px}}
+h2{{font-size:17.5px;color:#1b3a54;border-left:5px solid #2c6e9b;padding-left:12px;margin:38px 0 14px}}
+table{{border-collapse:collapse;background:#fff;width:100%;font-size:13.8px;margin:14px 0;border-radius:8px;overflow:hidden}}
+td,th{{border:1px solid #e2e8ef;padding:9px 13px;text-align:left;vertical-align:top}}
+th{{background:#f2f6fa;color:#1b3a54;font-weight:600}}
+tr:nth-child(even) td{{background:#fafcfe}}
+tr:hover td{{background:#f0f6fb}}
+.note,.warn,.good{{border-radius:10px;padding:14px 18px;font-size:14px;margin:14px 0;line-height:1.8}}
+.note{{background:#fff8e6;border:1px solid #e8d9a0}}
+.warn{{background:#fdecea;border:1px solid #e6b0aa}}
+.good{{background:#eafaf1;border:1px solid #b7e4c7}}
+.ok{{color:#1c7a4d;font-weight:600}} .bad{{color:#c0392b;font-weight:600}} code{{background:#eef1f4;padding:1px 6px;border-radius:5px;font-size:12.8px}}
+.meta{{color:#7a8a94;font-size:13px;text-align:center;margin-top:36px}}
 .term{{border-bottom:1px dashed #2c6e9b;cursor:help;position:relative}}
 .tip{{display:none;position:absolute;left:0;top:1.5em;z-index:9;width:340px;background:#fff;border:1px solid #b9cbda;border-radius:8px;
 box-shadow:0 4px 14px rgba(30,60,90,.18);padding:10px 13px;font-size:13px;line-height:1.7;color:#33475b;cursor:default;font-weight:400}}
 .term.open .tip{{display:block}}
-.pri{{display:inline-block;min-width:64px;text-align:center;border-radius:6px;padding:2px 8px;font-size:13px;font-weight:600}}
+.pri{{display:inline-block;min-width:64px;text-align:center;border-radius:6px;padding:2px 8px;font-size:13px;font-weight:600;white-space:nowrap}}
 .p1{{background:#c0392b;color:#fff}} .p2{{background:#e67e22;color:#fff}} .p3{{background:#2c6e9b;color:#fff}} .px{{background:#95a5a6;color:#fff}}
-</style></head><body>
+</style></head><body><div class="wrap">
 <h1>本周工作总结与优先项建议（2026-11-02 ~ 11-05）</h1>
-<p class="meta">{STAMP} ｜ 依据：日报三篇（11-02/03/05）、26 个 git 提交、各日期产物目录 ｜
+<p class="subtitle">{STAMP} ｜ 依据：日报三篇（11-02/03/05）、26 个 git 提交、各日期产物目录 ｜
 性质：工作纪要与管理建议，<b>不是效果放行报告</b>。时间戳候选的全量放行截至本报告时仍在跑（21/93 批）。</p>
 
 <h2>一句话结论</h2>
@@ -116,8 +123,8 @@ inc11 修复探索 5 条路线全部被数据证伪后才收敛为止血方案�
 <tr><td>4</td><td>日报切换三板块模板，首次执行"平静的一天"规则</td></tr>
 <tr><td>5</td><td>规划独立集 v2（加厚 + 补亚阈值时间戳 + 含真实日期的文档负例），供下批转正用</td></tr></table>
 
-<p class="meta">依据文件：out/日报/工作总结_2026-11-02.md、_2026-11-03.md、_2026-11-05.md；
-out/日期时间戳OCR种子候选_20261105/（进展记录、验收证据、报告 17:38 版）；
+<p class="meta">依据文件：out/日报/工作总结_2026-11-02.md、_2026-11-03.md、_2026-11-05.md；<br/>
+out/日期时间戳OCR种子候选_20261105/（进展记录、验收证据、报告 17:38 版）；<br/>
 out/极淡区域反染色验收_20261105/；out/极淡区域反染色候选_20261104/。</p>
 <script>
 document.addEventListener('click',function(e){{
@@ -127,7 +134,7 @@ document.addEventListener('click',function(e){{
 }});
 document.addEventListener('keydown',function(e){{if(e.key==='Escape')document.querySelectorAll('.term.open').forEach(function(x){{x.classList.remove('open');}});}});
 </script>
-</body></html>"""
+</div></body></html>"""
     REPORT.write_text(html, encoding='utf-8')
     print(f'written: {REPORT} ({len(html) / 1024:.0f} KB)')
 
