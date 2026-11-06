@@ -174,12 +174,22 @@ if ($rest.Count -gt 0) { $sub = $rest[0]; $rest = $rest[1..($rest.Count - 1)] }
 
 # --gpu 标志（可出现在任意位置）：LaMa 用 WM_LAMA_CUDA=1，WeVisOne 用 cuda:0
 $Device = 'cpu'
+$gpu = $false
 $kept = @()
 foreach ($a in $rest) {
-    if ($a -eq '--gpu') { $Device = 'cuda:0'; $env:WM_LAMA_CUDA = '1' } else { $kept += $a }
+    if ($a -eq '--gpu') { $gpu = $true } else { $kept += $a }
 }
 $rest = $kept
-if ($env:WM_LAMA_CUDA -eq '1') { Say "GPU 模式：LaMa 使用 WM_LAMA_CUDA=1，WeVisOne 使用 cuda:0" }
+if ($gpu) {
+    $Device = 'cuda:0'
+    $cudaOk = & $VenvPython -c "import onnxruntime as o; print('CUDAExecutionProvider' in o.get_available_providers())" 2>$null
+    if ($cudaOk -contains 'True') {
+        $env:WM_LAMA_CUDA = '1'
+        Say "GPU 模式：LaMa 使用 WM_LAMA_CUDA=1，WeVisOne 使用 cuda:0"
+    } else {
+        Warn "GPU 模式：主环境未安装可用的 CUDA 版 onnxruntime，LaMa 保持 CPU；WeVisOne 使用 cuda:0"
+    }
+}
 
 switch ($sub) {
     'setup'  { Invoke-Setup }

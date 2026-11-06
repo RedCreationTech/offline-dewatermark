@@ -198,8 +198,13 @@ WV_DEVICE=cpu
 filtered=()
 for a in "$@"; do
     case "$a" in
-        --gpu) WV_DEVICE=cuda:0; export WM_LAMA_CUDA=1
-               say "GPU 模式：LaMa 使用 WM_LAMA_CUDA=1，WeVisOne 使用 cuda:0" ;;
+        --gpu) WV_DEVICE=cuda:0
+               if "$VENV_PY" -c "import onnxruntime as o;exit(0 if 'CUDAExecutionProvider' in o.get_available_providers() else 1)" >/dev/null 2>&1; then
+                   export WM_LAMA_CUDA=1
+                   say "GPU 模式：LaMa 使用 WM_LAMA_CUDA=1，WeVisOne 使用 cuda:0"
+               else
+                   warn "GPU 模式：主环境未安装可用的 CUDA 版 onnxruntime，LaMa 保持 CPU；WeVisOne 使用 cuda:0"
+               fi ;;
         *) filtered+=("$a") ;;
     esac
 done
