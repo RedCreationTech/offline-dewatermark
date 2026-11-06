@@ -23,6 +23,8 @@ cd offline-dewatermark
 ./start.sh gui         # 打开桌面程序
 ```
 
+Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），子命令与 `./start.sh` 完全一致，例如 `start.bat gui`、`start.bat check-data`；脚本内部已处理虚拟环境路径与 UTF-8 编码。
+
 日常使用已有本地依赖和模型；严格离线部署须提前准备资源和对应平台的 Python 依赖。图片输入与评分参考分开，干净图、alpha 和标注不能用于决定当前单图选区或处理结果。
 
 数据与模型从本仓库的 [2026年10月27日资源包](https://github.com/RedCreationTech/offline-dewatermark/releases/tag/resources-2026-10-27) 下载。2026-11-02 已复制原 Release 的六个附件，文件名、大小与 SHA256 保持一致，原仓库 Release 继续保留。资源仍属于 2026-10-27 快照，不能直接视为当前清单，现有工作目录不要被旧包覆盖。

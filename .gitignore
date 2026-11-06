@@ -58,3 +58,6 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+
+# 本机安装 Python 安装包等装机临时文件
+.setup/
