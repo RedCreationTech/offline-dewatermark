@@ -52,12 +52,26 @@ def _load_model(model_path: str, device: str):
                       dtype=dtype, decoder_batch_size=decoder_batch), dtype
 
 
-def _stub_segment() -> dict:
-    return {"ok": True, "instances": [{"box": [64, 48, 192, 144]}],
+def _stub_segment(image_png_b64: str) -> dict:
+    import numpy as np
+    from PIL import Image
+
+    image = Image.open(io.BytesIO(base64.b64decode(image_png_b64))).convert("RGB")
+    w, h = image.size
+    matte = np.zeros((h, w), np.uint8)
+    cv2 = __import__("cv2", fromlist=["ellipse"])
+    cv2.ellipse(matte, (w // 2, h // 2), (max(8, w // 3), max(6, h // 4)), 0, 0, 360, 200, -1)
+    buffer = io.BytesIO()
+    Image.fromarray(matte, "L").save(buffer, "PNG")
+    box = [int(w * .25), int(h * .25), int(w * .75), int(h * .75)]
+    return {"ok": True,
+            "instances": [{"box": box,
+                           "matte_png_b64": base64.b64encode(buffer.getvalue()).decode("ascii")}],
             "latency_ms": 1, "model": "stub"}
 
 
 def _segment(model, image_png_b64: str, query: str) -> dict:
+    import base64
     import numpy as np
     from PIL import Image
 
@@ -68,14 +82,21 @@ def _segment(model, image_png_b64: str, query: str) -> dict:
     result = model.predict(image, task="segmentation", query=query)
     latency_ms = int((time.perf_counter() - started) * 1000)
     instances = []
-    for box in result.boxes:
+    for box, matte in zip(result.boxes, result.masks):
         x0, y0, x1, y1 = box
         px0, py0 = int(round(x0 * w)), int(round(y0 * h))
         px1, py1 = int(round(x1 * w)), int(round(y1 * h))
         px0, py0 = max(0, px0), max(0, py0)
         px1, py1 = min(w, px1), min(h, py1)
-        if px1 - px0 >= 4 and py1 - py0 >= 4:
-            instances.append({"box": [px0, py0, px1, py1]})
+        if px1 - px0 < 4 or py1 - py0 < 4:
+            continue
+        item = {"box": [px0, py0, px1, py1]}
+        # matte 仅作为搜索范围约束使用（客户端与框内证据求交），不直接修复
+        if matte is not None and int(matte.max()) >= 16:
+            buffer = io.BytesIO()
+            Image.fromarray(matte.astype(np.uint8), "L").save(buffer, "PNG")
+            item["matte_png_b64"] = base64.b64encode(buffer.getvalue()).decode("ascii")
+        instances.append(item)
     return {"ok": True, "instances": instances, "latency_ms": latency_ms,
             "model": getattr(model, "model_name_or_path", "wevisone")}
 
@@ -113,7 +134,7 @@ def main() -> int:
                 _send({"ok": True, "pong": True})
             elif cmd == "segment":
                 if args.stub:
-                    _send(_stub_segment())
+                    _send(_stub_segment(request["image_png_b64"]))
                 else:
                     _send(_segment(model, request["image_png_b64"],
                                    str(request.get("query", ""))))

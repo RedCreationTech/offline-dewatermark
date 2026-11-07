@@ -171,8 +171,11 @@ class Service:
             return False
 
     def segment(self, image_rgb, query: str,
-                timeout: float = SEGMENT_TIMEOUT_S) -> list[tuple[int, int, int, int]]:
-        """对整图跑提示词分割，返回实例框列表（原图像素坐标 xyxy）。"""
+                timeout: float = SEGMENT_TIMEOUT_S) -> list[tuple[tuple[int, int, int, int], object]]:
+        """对整图跑提示词分割，返回 [(实例框 xyxy, matte 灰度图或 None)]。
+
+        matte 是模型给出的提示词限定水印软遮罩，只作搜索范围约束，不能直接修复。
+        """
         import numpy as np
         from PIL import Image
 
@@ -188,8 +191,13 @@ class Service:
         boxes = []
         for item in response.get("instances", []):
             box = item.get("box")
-            if isinstance(box, (list, tuple)) and len(box) == 4:
-                boxes.append(tuple(int(v) for v in box))
+            if not (isinstance(box, (list, tuple)) and len(box) == 4):
+                continue
+            matte = None
+            if item.get("matte_png_b64"):
+                raw = base64.b64decode(item["matte_png_b64"])
+                matte = np.array(Image.open(io.BytesIO(raw)).convert("L"))
+            boxes.append((tuple(int(v) for v in box), matte))
         self.last_latency_ms = response.get("latency_ms")
         self.last_model = response.get("model", self.last_model)
         return boxes

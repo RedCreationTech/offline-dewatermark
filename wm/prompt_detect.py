@@ -7,8 +7,13 @@ Strokes found inside boxes merge into one MaskLayer with source=MODEL; the
 merged layer uses the conservative inpaint route because per-box measured veil
 fields cannot be combined into one validated physical model.
 
-matte is not requested, not transferred and not displayed (design Q3); boxes are
-kept as WatermarkInstance entries for the canvas overlay and export evidence.
+The model's matte (the prompt-qualified watermark soft mask) is used as a search
+range constraint: growth and seeds are confined to the matte support, so strong
+background content inside the box (printed lines, tables) cannot win the
+evidence competition. matte is never the repair mask itself — every selected
+pixel still needs local contrast evidence, and the matte halo without evidence
+is dropped. Boxes are kept as WatermarkInstance entries for the canvas overlay
+and export evidence.
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ from time import perf_counter
 import cv2
 import numpy as np
 
-from . import masks, recall
+from . import masks, ocr, recall
 from .contract import MaskLayer, MaskSource, Thresholds, WatermarkInstance
 
 METHOD = "prompt_located_strokes"
@@ -44,8 +49,10 @@ def _contrast_seed(crop: np.ndarray, domain: np.ndarray, height: float) -> np.nd
     values = best[domain]
     if values.size == 0:
         return np.zeros(crop.shape[:2], bool)
-    cut = float(np.percentile(values, 97))
-    return domain & (best >= max(cut, 6.0))
+    # 密度要足以覆盖笔画主体：背景对照区 = 域内未进种子的部分；
+    # 种子太稀时笔画本身会污染背景参照，导致阈值爆炸、生长为空。
+    cut = float(np.percentile(values, 85))
+    return domain & (best >= max(cut, 8.0))
 
 
 def _clamp_box(box, width: int, height: int) -> tuple[int, int, int, int] | None:
@@ -73,14 +80,28 @@ def locate_strokes(image: np.ndarray, query: str, service,
     if not query or not query.strip():
         raise ValueError("提示词为空，请输入要去除的水印文字描述。")
     started = perf_counter()
-    raw_boxes = service.segment(image_rgb=image[..., :3], query=query.strip())
+    raw_instances = service.segment(image_rgb=image[..., :3], query=query.strip())
     height, width = image.shape[:2]
-    boxes = [b for b in (_clamp_box(raw, width, height) for raw in raw_boxes) if b]
+    boxes = []
+    supports: list[np.ndarray | None] = []
+    for raw_box, matte in raw_instances:
+        clamped = _clamp_box(raw_box, width, height)
+        if clamped is None:
+            continue
+        boxes.append(clamped)
+        support = None
+        if matte is not None and matte.shape[:2] == (height, width):
+            # matte＝提示词限定的水印软遮罩，只作搜索范围：外扩 4px 衔接抗锯齿边缘
+            base = matte if matte.dtype == bool else (matte >= 128)
+            if base.any():
+                support = cv2.dilate(base.astype(np.uint8),
+                                     np.ones((9, 9), np.uint8)).astype(bool)
+        supports.append(support)
     info = {
         "detector": METHOD,
         "query": query.strip(),
         "treatment": treatment,
-        "model_boxes": [list(b) for b in raw_boxes],
+        "model_boxes": [list(b) for b, _ in raw_instances],
         "boxes_with_support": 0,
         "text_overlap_ratio": 0.0,
     }
@@ -95,7 +116,7 @@ def locate_strokes(image: np.ndarray, query: str, service,
     instances: list[WatermarkInstance] = []
     confidences: list[float] = []
     supported_boxes = 0
-    for index, (x0, y0, x1, y1) in enumerate(boxes):
+    for index, ((x0, y0, x1, y1), support) in enumerate(zip(boxes, supports)):
         left, top = max(0, x0 - BOX_PAD), max(0, y0 - BOX_PAD)
         right, bottom = min(width, x1 + BOX_PAD), min(height, y1 + BOX_PAD)
         crop = image[top:bottom, left:right]
@@ -103,9 +124,17 @@ def locate_strokes(image: np.ndarray, query: str, service,
                                            use_ocr=use_ocr, style=None)
         domain = np.zeros(crop.shape[:2], bool)
         domain[y0 - top:y1 - top, x0 - left:x1 - left] = True
-        protected = local.text_keepout if local.text_keepout is not None else \
-            np.zeros(crop.shape[:2], bool)
-        grow_domain = domain & ~protected  # 正文保护区只约束水印选区，不生长
+        if use_ocr and crop.shape[1] >= 200 and crop.shape[0] >= 60:
+            # estimate_single_page 不回传 text_keepout，直接取 OCR 正文区；
+            # 保护区约束选区生长。取消"文字识别"勾选可整体关闭（用户显式选择）。
+            zones = ocr.text_zones(crop[..., :3])
+            protected = zones if zones is not None else np.zeros(crop.shape[:2], bool)
+        else:
+            protected = np.zeros(crop.shape[:2], bool)
+        grow_domain = domain & ~protected  # 正文保护区约束选区生长
+        if support is not None:
+            support_crop = support[top:bottom, left:right]
+            grow_domain &= support_crop  # matte 搜索范围约束：背景不参与
         seed = (local.binary(settings.mask_alpha_min) > 0) & grow_domain
         box_h = max(12., min(x1 - x0, y1 - y0) / 3.)
         if not seed.any():
@@ -131,8 +160,7 @@ def locate_strokes(image: np.ndarray, query: str, service,
             if paper is None:
                 paper = np.full((height, width) + local.paper.shape[2:], fill, np.float32)
             paper[top:bottom, left:right] = local.paper
-        if local.text_keepout is not None:
-            keepout[top:bottom, left:right] |= local.text_keepout
+        keepout[top:bottom, left:right] |= protected
         instances.append(WatermarkInstance(
             instance_id=index + 1, bbox=(x0, y0, x1, y1), pixel_count=int(chosen.sum()),
             mean_alpha=float(np.maximum(local.alpha, 0.09)[chosen].mean()),

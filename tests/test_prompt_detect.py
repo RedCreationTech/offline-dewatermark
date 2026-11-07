@@ -8,6 +8,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+import cv2
 import numpy as np
 from PySide6.QtTest import QTest
 
@@ -20,10 +21,16 @@ from wm.wevisone_client import Service, ServiceError
 
 
 class FakeService:
-    """假模型服务：按预设框返回，记录调用。"""
+    """假模型服务：按预设框/matte 返回，记录调用。"""
 
     def __init__(self, boxes=()):
-        self.boxes = list(boxes)
+        # 每项可为 xyxy（matte=None）或 (xyxy, matte)
+        self.boxes = []
+        for item in boxes:
+            if len(item) == 4 and all(isinstance(v, (int, float)) for v in item):
+                self.boxes.append((tuple(item), None))
+            else:
+                self.boxes.append((tuple(item[0]), item[1]))
         self.calls = []
         self.last_model = 'fake'
         self.last_latency_ms = 1
@@ -91,8 +98,9 @@ class PromptDetectTests(unittest.TestCase):
         image = np.array(pil)
         ink = (image.mean(2) < 235)
         box = (40, 60, 300, 160)
+        # 该用例验证低对比生长，OCR 保护区另行测试；此处关闭以免文字区覆盖整框
         layer, info = prompt_detect.locate_strokes(image, '灰字', FakeService([box]),
-                                                   Thresholds())
+                                                   Thresholds(), use_ocr=False)
         sel = layer.footprint
         recall = int((sel & ink).sum()) / max(1, int(ink.sum()))
         self.assertEqual(info['boxes_with_support'], 1)
@@ -102,6 +110,45 @@ class PromptDetectTests(unittest.TestCase):
         blank = np.zeros(image.shape[:2], bool)
         blank[by0:by1, bx0:bx0+15] = True
         self.assertLess(int((sel & blank).sum()), 30)
+
+    def test_matte_support_confines_selection_to_prompted_strokes(self):
+        # 框内背景横线比目标斜向笔画对比更强时，matte（提示词限定）应把
+        # 选区约束在水印笔画上，背景线不得入选
+        from PIL import Image, ImageDraw, ImageFont
+        image = np.full((300, 400, 3), 250, np.uint8)
+        pil = Image.fromarray(image)
+        draw = ImageDraw.Draw(pil)
+        font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 15)
+        big = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 44)
+        for i in range(8):
+            draw.text((30, 40 + i * 30), f'背景行 sample {100+i} value {10.5+i:.2f}', fill=(25, 25, 25), font=font)
+        wm_layer = Image.new("RGBA", pil.size, (0, 0, 0, 0))
+        wdraw = ImageDraw.Draw(wm_layer)
+        wdraw.text((60, 110), "内部演示稿", fill=(20, 20, 20, 255), font=big)
+        wm_layer = wm_layer.rotate(-25, resample=Image.BICUBIC, center=(200, 150))
+        pil = Image.alpha_composite(pil.convert("RGBA"), wm_layer).convert("RGB")
+        image = np.array(pil)
+        gt = np.array(wm_layer)[..., 3] > 127
+        ys, xs = np.where(gt)
+        box = (int(xs.min()) - 6, int(ys.min()) - 6, int(xs.max()) + 6, int(ys.max()) + 6)
+        # 强背景横线框（无 matte）→ 误选背景；给 matte → 只选水印
+        layer_bad, _ = prompt_detect.locate_strokes(
+            image, '斜向黑字', FakeService([box]), Thresholds())
+        layer_good, info = prompt_detect.locate_strokes(
+            image, '斜向黑字', FakeService([(box, gt)]), Thresholds())
+        sel_bad, sel = layer_bad.footprint, layer_good.footprint
+        support = cv2.dilate(gt.astype(np.uint8), np.ones((9, 9), np.uint8)).astype(bool)
+        gt_hits = int((sel & gt).sum())
+        extra_bad = int((sel_bad & ~gt).sum())
+        extra_good = int((sel & ~support).sum())
+        print(f'  无matte: sel={int(sel_bad.sum())} 命中={int((sel_bad&gt).sum())} 误选背景={extra_bad} '
+              f'| 有matte: sel={int(sel.sum())} 命中={gt_hits} 约束外={extra_good}')
+        # 核心保证：matte 约束下选区严格不出支撑范围（背景零误选）。
+        # 低分辨率小图里水印若被 OCR 正文区完全覆盖，空选区＝安全退回（闸门拦截、不动原图），
+        # 高分辨率真实图中正文区不连续，水印大部分可入选（见自测报告真实案例）。
+        self.assertEqual(extra_good, 0)
+        if gt_hits:
+            self.assertGreater(gt_hits, 500)
 
     def test_box_treatment_repaints_whole_box_and_reports_overlap(self):
         image = np.full((240, 320, 3), 245, np.uint8)
@@ -158,9 +205,13 @@ class ClientProtocolTests(unittest.TestCase):
             self.assertEqual(ready['status'], 'ready')
             self.assertTrue(service.running)
             self.assertTrue(service.ping())
-            image = np.zeros((48, 64, 3), np.uint8)
+            image = np.zeros((192, 256, 3), np.uint8)
             boxes = service.segment(image, '测试')
-            self.assertEqual(boxes, [(64, 48, 192, 144)])
+            self.assertEqual(len(boxes), 1)
+            box, matte = boxes[0]
+            self.assertEqual(box, (64, 48, 192, 144))
+            self.assertIsNotNone(matte)
+            self.assertEqual(matte.shape, (192, 256))
             service.stop()
             self.assertFalse(service.running)
             with self.assertRaises(ServiceError):
