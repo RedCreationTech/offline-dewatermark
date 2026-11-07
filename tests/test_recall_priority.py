@@ -141,7 +141,7 @@ class UnknownResidualTests(unittest.TestCase):
         self.assertTrue(report.review_needed)
         with tempfile.TemporaryDirectory() as folder:
             root = pipeline.write_results([PageResult(source, source, mask, report)], folder)
-            data = json.loads((root/'manifest.json').read_text())
+            data = json.loads((root/'manifest.json').read_text(encoding='utf-8'))
             self.assertIsNone(data['pages'][0]['verdict']['metrics']['residual_coverage'])
             self.assertIsNone(data['summary']['success_rate'])
 

@@ -114,7 +114,7 @@ class AssistedBoundaryTests(unittest.TestCase):
         self.assertIs(out.automatic_result, result)
         with tempfile.TemporaryDirectory() as directory:
             root = pipeline.write_results([out], directory)
-            data = json.loads((root/'manifest.json').read_text())
+            data = json.loads((root/'manifest.json').read_text(encoding='utf-8'))
             self.assertEqual(data['summary']['automatic']['success_rate'], 1.)
             self.assertIsNone(data['summary']['human_assisted']['success_rate'])
             page = data['pages'][0]
@@ -124,7 +124,7 @@ class AssistedBoundaryTests(unittest.TestCase):
             self.assertEqual(len(page['assistance_steps']), 2)
             for step in page['assistance_steps']:
                 self.assertTrue((root/step['mask']).is_file())
-            self.assertIn('不计为全自动处理效果', (root/'水印选区与处理结果复核.html').read_text())
+            self.assertIn('不计为全自动处理效果', (root/'水印选区与处理结果复核.html').read_text(encoding='utf-8'))
 
 
 class AssistedDesktopTests(unittest.TestCase):

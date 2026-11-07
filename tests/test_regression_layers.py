@@ -13,8 +13,8 @@ from tools.regression_guard import apply_reviews, compare_subset
 from tools.regression_layers import changed_files, expand_batches, jobs_for, make_plan, minimum_level
 
 ROOT = Path(__file__).resolve().parents[1]
-RULES = json.loads((ROOT / 'config/regression_tiers.json').read_text())
-POLICY = json.loads((ROOT / 'config/regression_control.json').read_text())
+RULES = json.loads((ROOT / 'config/regression_tiers.json').read_text(encoding='utf-8'))
+POLICY = json.loads((ROOT / 'config/regression_control.json').read_text(encoding='utf-8'))
 
 
 def fixture():

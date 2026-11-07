@@ -164,7 +164,7 @@ class SelectionRepairTests(unittest.TestCase):
             applied = apply_selection(result, edit.request(Thresholds()))
         with tempfile.TemporaryDirectory() as folder:
             root = pipeline.write_results([applied], folder)
-            record = json.loads((root/'manifest.json').read_text())['pages'][0]
+            record = json.loads((root/'manifest.json').read_text(encoding='utf-8'))['pages'][0]
             binary = np.array(Image.open(root/record['files']['mask'])) > 0
             np.testing.assert_array_equal(binary, edit.selected)
             with np.load(root/record['files']['mask_data'], allow_pickle=False) as arrays:

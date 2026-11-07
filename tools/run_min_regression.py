@@ -17,12 +17,12 @@ sys.path.insert(0,str(ROOT))
 DEFAULT=ROOT/'data/watermark_regression_min_v1'
 
 
-def read_rows(p):return [json.loads(x) for x in p.read_text().splitlines() if x.strip()]
+def read_rows(p):return [json.loads(x) for x in p.read_text(encoding='utf-8').splitlines() if x.strip()]
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def validate(root):
-    cases=read_rows(root/'manifest.jsonl');cov=json.loads((root/'coverage.json').read_text())
+    cases=read_rows(root/'manifest.jsonl');cov=json.loads((root/'coverage.json').read_text(encoding='utf-8'))
     assert sha(root/'manifest.jsonl')==cov['manifest_sha256']
-    files=json.loads((root/'file_hashes.json').read_text())
+    files=json.loads((root/'file_hashes.json').read_text(encoding='utf-8'))
     for path,digest in files.items():
         assert sha(root/path)==digest,path
     from tools.regression_retirements import load_profile
@@ -61,7 +61,7 @@ def main():
         summary['negative_pages']=sum(1 for r in results if r['negative'] for p in r['pages'])
         summary['negative_safe']=sum(p.get('passed') is True for r in results if r['negative'] for p in r['pages'])
         summary['manual_review_pages']=sum(p['status']=='manual_review' for r in results for p in r['pages'])
-        (out/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
+        (out/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding='utf-8')
         cards=[]
         def link(path):return os.path.relpath(path,out).replace(os.sep,'/')
         for r in results:
@@ -72,7 +72,7 @@ def main():
                         u=link(out/p[role]);figs.append(f'<figure><a href="{html.escape(u)}" target="_blank"><img loading="lazy" src="{html.escape(u)}"></a><figcaption>{title}</figcaption></figure>')
                 cards.append(f'<article><h2>{html.escape(r["case_id"]+" · "+r["label"])} · 第 {p["page"]} 页</h2><p>{html.escape(p["status"])} / {html.escape(str(p.get("passed")))}</p><div class="pair">'+''.join(figs)+f'</div><pre>{html.escape(json.dumps(p.get("metrics",{}),ensure_ascii=False,indent=2))}</pre><p>{html.escape(p.get("error", ""))}</p></article>')
         page='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>最小集回归结果</title><style>body{font:15px/1.8 system-ui;background:#f1f4f8;color:#25394e;padding:25px;max-width:1500px;margin:auto}article{background:white;border:1px solid #dae4ef;border-radius:10px;padding:24px;margin:20px 0}.pair{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}figure{margin:0}img{width:100%;height:350px;object-fit:contain;background:#f3f5f7}pre{white-space:pre-wrap;font-size:12px}</style><h1>固定最小集自动回归结果</h1><p>配对正例 '+str(summary['paired_positive_passed'])+'/'+str(summary['paired_positive_pages'])+' 页通过；负例 '+str(summary['negative_safe'])+'/'+str(summary['negative_pages'])+' 安全保留；待人工复核 '+str(summary['manual_review_pages'])+' 页。</p><p>core 与 real 的来源属性见 summary.json，不能把 train 来源扩展当作留出验证。</p>'+''.join(cards)+'</html>'
-        (out/'report.html').write_text(page)
+        (out/'report.html').write_text(page,encoding='utf-8')
     for index,case in enumerate(chosen,1):
         record={k:case[k] for k in ['case_id','label','suite','negative','score_mode','source_group','original_split']};record['pages']=[]
         try:

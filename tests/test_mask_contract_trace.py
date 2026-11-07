@@ -49,7 +49,7 @@ class MaskContractTraceTests(unittest.TestCase):
                 actual, _ = repair.repair(source, mask, thr)
             np.testing.assert_array_equal(expected, actual)
             np.testing.assert_array_equal(base.alpha, selected.astype(np.float32))
-            row = json.loads(next(folder.glob('逐阶段_*/逐阶段记录.json')).read_text())
+            row = json.loads(next(folder.glob('逐阶段_*/逐阶段记录.json')).read_text(encoding='utf-8'))
             call = row['lama_calls'][0]
             model_mask = np.asarray(Image.open(Path(row['directory']) /
                 '06_LaMa调用0_模型实际输入选区.png')) > 0

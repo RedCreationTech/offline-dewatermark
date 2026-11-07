@@ -20,7 +20,7 @@ class ExportQualityTests(unittest.TestCase):
                             processing={'thresholds': {'mask_alpha_min': .2}})
         with tempfile.TemporaryDirectory() as folder:
             root = pipeline.write_results([result], folder)
-            manifest = json.loads((root/'manifest.json').read_text())
+            manifest = json.loads((root/'manifest.json').read_text(encoding='utf-8'))
             page = manifest['pages'][0]
             files = page['files']
             for path in files.values():
@@ -37,7 +37,7 @@ class ExportQualityTests(unittest.TestCase):
             self.assertEqual(page['selection']['selected_pixels'], 2)
             self.assertEqual(page['selection']['threshold'], .2)
             self.assertAlmostEqual(page['coverage'], 1/3, places=5)
-            self.assertIn('水印选区', (root/'水印选区与处理结果复核.html').read_text())
+            self.assertIn('水印选区', (root/'水印选区与处理结果复核.html').read_text(encoding='utf-8'))
             self.assertNotIn('watermark', files)
 
     def test_duplicate_and_unsafe_names_preserve_every_page_and_escape_html(self):
@@ -48,13 +48,13 @@ class ExportQualityTests(unittest.TestCase):
             results.append(PageResult(source, source, MaskLayer(np.zeros((2, 3))), report))
         with tempfile.TemporaryDirectory() as folder:
             root = pipeline.write_results(iter(results), folder)
-            pages = json.loads((root/'manifest.json').read_text())['pages']
+            pages = json.loads((root/'manifest.json').read_text(encoding='utf-8'))['pages']
             self.assertNotEqual(pages[0]['files']['source'], pages[1]['files']['source'])
             for page, value in zip(pages, (30, 200)):
                 for path in page['files'].values():
                     self.assertEqual((root/path).parent, root)
                 self.assertTrue(np.all(np.array(Image.open(root/page['files']['source'])) == value))
-            html = (root/'水印选区与处理结果复核.html').read_text()
+            html = (root/'水印选区与处理结果复核.html').read_text(encoding='utf-8')
             self.assertNotIn('<script>', html)
             self.assertIn('&lt;script&gt;', html)
 
@@ -66,7 +66,7 @@ class ExportQualityTests(unittest.TestCase):
                           processing={'mask_close_px':11})
         with tempfile.TemporaryDirectory() as folder:
             pipeline.write_results([result],folder)
-            data=json.loads((Path(folder)/'manifest.json').read_text(),parse_constant=lambda v: (_ for _ in ()).throw(ValueError(v)))
+            data=json.loads((Path(folder)/'manifest.json').read_text(encoding='utf-8'),parse_constant=lambda v: (_ for _ in ()).throw(ValueError(v)))
         self.assertIsNone(data['summary']['success_rate'])
         self.assertEqual(data['summary']['passed'],0)
         self.assertEqual(data['summary']['checks_passed'],1)
@@ -81,7 +81,7 @@ class ExportQualityTests(unittest.TestCase):
         result=PageResult(source,source,MaskLayer(np.zeros((20,30),np.float32)),report)
         with tempfile.TemporaryDirectory() as folder:
             pipeline.write_results([result],folder)
-            data=json.loads((Path(folder)/'manifest.json').read_text())
+            data=json.loads((Path(folder)/'manifest.json').read_text(encoding='utf-8'))
         self.assertEqual(data['summary']['success_rate'],1.)
         self.assertEqual(data['summary']['quality_evaluated'],1)
 

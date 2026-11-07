@@ -9,9 +9,15 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from hashlib import sha256
 from time import perf_counter
-from zoneinfo import ZoneInfo
 
 import numpy as np
+
+try:
+    from zoneinfo import ZoneInfo
+    _SHANGHAI = ZoneInfo('Asia/Shanghai')
+except Exception:  # Windows 无系统时区库且未装 tzdata 时，用固定 UTC+8（上海自 1991 年起无夏令时）
+    from datetime import timedelta, timezone
+    _SHANGHAI = timezone(timedelta(hours=8), 'Asia/Shanghai')
 
 from . import repair, verdict
 from .assisted import image_hash
@@ -190,7 +196,7 @@ def apply_selection(result: PageResult, request: SelectionRequest) -> PageResult
     processing = deepcopy(result.processing)
     history = processing.setdefault('human_assistance', [])
     history.append(dict(operation='edit_complete_selection',
-                        confirmed_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds'),
+                        confirmed_at=datetime.now(_SHANGHAI).isoformat(timespec='seconds'),
                         source_sha256=request.source_hash, base_output_sha256=request.base_output_hash,
                         candidate_sha256=request.selection_hash, selected_pixels=int(selected.sum()),
                         added_pixels=int((selected & ~auto).sum()), removed_pixels=int((auto & ~selected).sum()),

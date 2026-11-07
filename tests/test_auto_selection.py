@@ -283,7 +283,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             import json
             pipeline.write_results([chosen], directory)
-            manifest = json.loads((Path(directory)/'manifest.json').read_text())
+            manifest = json.loads((Path(directory)/'manifest.json').read_text(encoding='utf-8'))
             self.assertIsNone(manifest['summary']['success_rate'])
             for candidate in manifest['pages'][0]['automatic_candidates']:
                 for path in candidate['files'].values():
