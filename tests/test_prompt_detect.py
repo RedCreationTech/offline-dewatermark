@@ -347,6 +347,23 @@ class PromptPanelTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.win.treatment_box.isVisible())
 
+    def test_multi_page_doc_labels_carry_page_number(self):
+        from wm.contract import PageImage
+        pages = [PageImage(np.zeros((40, 50, 3), np.uint8), 72, 'real_009', page_index=i)
+                 for i in range(3)]
+        pages.append(PageImage(np.zeros((40, 50, 3), np.uint8), 72, 'real_006'))
+        batch = Batch('多页', pages)
+        self.win.batches = [batch]
+        self.win.refresh_batches()
+        self.win.batch_list.setCurrentRow(0)
+        self.win.select_batch(0)  # 行号未变时信号不触发，直接调用
+        self.app.processEvents()
+        texts = [self.win.page_list.item(i).text() for i in range(4)]
+        self.assertIn('real_009·第1页', texts[0])
+        self.assertIn('real_009·第3页', texts[2])
+        self.assertIn('real_006', texts[3])
+        self.assertNotIn('第1页', texts[3])
+
     def test_start_run_aborts_without_prompt(self):
         self.win.mode_box.setCurrentIndex(1)
         self.win.prompt_edit.setText('')
