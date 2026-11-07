@@ -55,6 +55,74 @@ def _contrast_seed(crop: np.ndarray, domain: np.ndarray, height: float) -> np.nd
     return domain & (best >= max(cut, 8.0))
 
 
+def _ink_mask(crop: np.ndarray, domain: np.ndarray, height: float) -> np.ndarray:
+    """框内墨迹二值：局部对比响应经 Otsu 分出"墨迹 vs 纸面"双峰。"""
+    smooth = cv2.GaussianBlur(crop.astype(np.float32), (0, 0), .8)
+    gray = smooth.mean(2)
+    channels = [gray]
+    channels.extend(smooth[..., c] - (smooth.sum(2) - smooth[..., c]) / 2 for c in range(3))
+    kernel = np.ones((min(31, max(9, int(.35 * height) | 1)),) * 2, np.uint8)
+    best = None
+    for channel in channels:
+        for operation in (cv2.MORPH_TOPHAT, cv2.MORPH_BLACKHAT):
+            feature = cv2.morphologyEx(channel, operation, kernel)
+            best = feature if best is None else np.maximum(best, feature)
+    scaled = np.clip(best / max(1.0, float(best.max())) * 255.0, 0, 255).astype(np.uint8)
+    values = scaled[domain]
+    if values.size == 0:
+        return np.zeros(domain.shape, bool)
+    cut, _ = cv2.threshold(values, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return domain & (scaled >= max(float(cut), 24.0))
+
+
+def _scale_channel(image: np.ndarray, box: tuple[int, int, int, int],
+                   height: float) -> np.ndarray:
+    """尺度通道：与正文小字尺度完全不同的巨大水印笔画。
+
+    巨大且不透明的水印笔画（如整页斜向黑字）在形态学带通里响应不稳，
+    但经"开运算去细结构"后，连通域尺度上与正文小字完全分开：正文行
+    半宽约 2–3px 被 9px 椭圆核开运算移除，大水印笔画（半宽 ≥6px）保留。
+    只保留与模型框相交的连通域（框内水印及其笔画延伸），框外大标题等
+    大字不入选。这是对证据生长通道的补充。
+    """
+    # 实心墨迹：按纸面亮度阈值取暗区域（黑帽只响应边缘，粗笔画内部无响应，
+    # 会导致开运算清空）。纸面亮度取全页高分位，墨迹阈值 = 纸面 - 50。
+    gray = cv2.GaussianBlur(image.astype(np.float32), (0, 0), .8).mean(2)
+    paper = float(np.percentile(gray, 90))
+    if paper - 50. <= 60.:
+        return np.zeros(image.shape[:2], bool)
+    ink = gray <= (paper - 50.)
+    if not ink.any():
+        return np.zeros(image.shape[:2], bool)
+    opened = cv2.morphologyEx(ink.astype(np.uint8), cv2.MORPH_OPEN,
+                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))).astype(bool)
+    if not opened.any():
+        return np.zeros(image.shape[:2], bool)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(opened.astype(np.uint8), 8)
+    x0, y0, x1, y1 = box
+    keep = []
+    for i in range(1, count):
+        bx, by = int(stats[i, cv2.CC_STAT_LEFT]), int(stats[i, cv2.CC_STAT_TOP])
+        bw, bh = int(stats[i, cv2.CC_STAT_WIDTH]), int(stats[i, cv2.CC_STAT_HEIGHT])
+        if not (bx < x1 and bx + bw > x0 and by < y1 and by + bh > y0):
+            continue
+        # 只留"近黑实芯"的大块：水印大字通常近黑；织物暗纹、灰色底纹
+        # 虽是深色连通域但不是近黑，不得入选。
+        mean_gray = float(cv2.mean(gray, (labels == i).astype(np.uint8))[0])
+        if mean_gray <= paper - 90.:
+            keep.append(i)
+    if not keep:
+        return np.zeros(image.shape[:2], bool)
+    selected = np.isin(labels, keep)
+    # 开运算后正文行已移除；再加一道宽度闸防细结构残留（半宽≥4px 才算笔画），
+    # 随后外扩 5px 还原开运算收缩并盖住抗锯齿边缘。
+    width = cv2.distanceTransform(selected.astype(np.uint8), cv2.DIST_L2, 5)
+    selected &= width >= 4.
+    if not selected.any():
+        return selected
+    return cv2.dilate(selected.astype(np.uint8), np.ones((11, 11), np.uint8)).astype(bool)
+
+
 def _clamp_box(box, width: int, height: int) -> tuple[int, int, int, int] | None:
     x0, y0, x1, y1 = (int(v) for v in box)
     x0, x1 = sorted((max(0, x0), min(width, x1)))
@@ -148,6 +216,11 @@ def locate_strokes(image: np.ndarray, query: str, service,
             hit = hit[hit > 0]
             grown = grown & np.isin(labels, hit) if hit.size else np.zeros_like(grown)
         chosen = grown & grow_domain
+        # 尺度通道补充（全页墨迹、开运算去细结构、只留与模型框相交的大块）：
+        # 证据生长对"巨大且不透明的水印笔画"响应不稳时，靠笔画尺度收回水印
+        # （含水印伸出模型框的笔画延伸；正文行已被开运算移除）。
+        scale_sel = _scale_channel(image, (x0, y0, x1, y1), box_h)
+        chosen = (grown & grow_domain) | scale_sel[top:bottom, left:right]
         if not chosen.any():
             continue
         supported_boxes += 1

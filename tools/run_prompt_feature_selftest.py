@@ -111,6 +111,33 @@ def run_mode(mode: str, query: str, service) -> dict:
     return info
 
 
+def run_real010(service) -> dict:
+    """真实软件 PDF（斜向黑字压正文）的提示词定位自检：尺度通道收回巨大水印笔画。"""
+    from wm import documents, prompt_detect, repair
+    from wm.contract import Thresholds
+    import cv2
+
+    pages = documents.load_pages(ROOT / "data/watermark_regression_min_v1/inputs/real/real_010.pdf", dpi=200)
+    image = pages[0].image[..., :3]
+    layer, info = prompt_detect.locate_strokes(image, '斜向黑字"内部演示稿"', service, Thresholds())
+    selected = layer.footprint
+    output, used = repair.repair(image.copy(), layer, Thresholds())
+    overlay = image.copy()
+    overlay[selected] = (0.5 * overlay[selected] + 0.5 * np.array([255, 40, 40])).astype(np.uint8)
+    for box in info["model_boxes"]:
+        cv2.rectangle(overlay, tuple(box[:2]), tuple(box[2:]), (255, 159, 67), 3)
+    Image.fromarray(overlay).save(OUT / "real010_selection.png")
+    Image.fromarray(output).save(OUT / "real010_output.png")
+    return {
+        "mode": "prompt", "sample": "real_010.pdf p1 (1654x2339)",
+        "query": '斜向黑字"内部演示稿"', "treatment": "strokes",
+        "model_boxes": info["model_boxes"], "selected_px": int(selected.sum()),
+        "repairs": [str(u) for u in used],
+        "note": "巨大斜向黑字压正文：尺度通道（开运算去细结构+近黑实芯）收回水印笔画，"
+                "含水印伸出模型框的延伸；正文行开运算后不移除，交叠处轻微损伤",
+    }
+
+
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     from wm.wevisone_client import Service
@@ -128,6 +155,7 @@ def main() -> int:
         print("自动识别完成:", json.dumps(results["auto"], ensure_ascii=False)[:200])
         results["prompt"] = run_mode("prompt", "验证素材 3409", service)
         print("提示词定位完成:", json.dumps(results["prompt"], ensure_ascii=False)[:200])
+        results["real_010"] = run_real010(service)
     finally:
         service.stop()
     (OUT / "自测结果.json").write_text(
