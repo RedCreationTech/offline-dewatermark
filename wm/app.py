@@ -14,14 +14,14 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QLocale, QTranslator, QLibraryInfo, QTimer
+from PySide6.QtCore import Qt, QLocale, QTranslator, QLibraryInfo, QTimer, QThread, Signal
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem,
     QMainWindow, QProgressBar, QPushButton, QSlider, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget, QInputDialog, QMessageBox,
-    QAbstractItemView, QScrollArea, QButtonGroup, QSpinBox,
+    QAbstractItemView, QScrollArea, QButtonGroup, QSpinBox, QLineEdit,
 )
 
 from . import documents, pipeline
@@ -32,13 +32,37 @@ from .viewer import ImageViewer
 from .export_review import overlay_mask
 from .assist_worker import AssistWorker
 from .selection_edit import SelectionEdit
+from . import prompt_detect, wevisone_client
 
 VIEW_MODES = ("拖拽对比", "处理结果", "原始图片", "水印选区")
 STYLE_LABELS = {None: "自动识别", "dot_grid": "点阵水印", "tiled_text": "平铺文字",
                 "big_center": "居中大字", "heavy_dark": "深色文字", "corner_id": "角标水印"}
+DETECTION_MODES = (("auto", "自动识别"), ("prompt", "提示词定位"))
+SERVICE_MODES = (("resident", "常驻服务"), ("ondemand", "按需启动"))
 OPEN_FILTER = "可处理文档 (*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff);;所有文件 (*)"
 
 DEFAULTS = Thresholds()
+
+
+class _ServiceWarmThread(QThread):
+    """后台预热 WeVisOne 服务，避免 GUI 线程等待模型加载。"""
+
+    done = Signal(str)  # 错误信息；空串表示成功
+
+    def __init__(self, service, parent=None) -> None:
+        super().__init__(parent)
+        self.service = service
+        self.terminate = False
+
+    def run(self) -> None:
+        try:
+            self.service.start()
+        except Exception as exc:
+            if not self.terminate:
+                self.done.emit(str(exc))
+            return
+        if not self.terminate:
+            self.done.emit("")
 
 # (attr, 显示名, 最小值, 最大值, 步长, 单位, 影响阶段)
 # 影响阶段决定重处理能否复用共享掩码：mask 类参数必须重新定位。
@@ -48,6 +72,12 @@ KNOBS: tuple[tuple[str, str, int, int, int, str, str], ...] = (
     ("lama_mask_dilate", "水印选区外扩", 0, 15, 1, "像素", "repair"),
     ("close_px", "水印笔画连接", 0, 25, 1, "像素", "mask"),
     ("mask_alpha_min", "水印判定阈值", 2, 30, 1, "%", "mask"),
+)
+# 参数面板按工作顺序分组展示（找水印→去水印→修复底图）；仅影响布局，不影响逻辑。
+PARAM_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("找水印", ("close_px", "mask_alpha_min")),
+    ("去水印", ("lama_mask_dilate",)),
+    ("修复底图", ("lama_context_margin", "lama_tile_overlap")),
 )
 # 掩码跨接宽度是 estimate_single_page 的入参而非 Thresholds 字段，默认值单独记。
 KNOB_DEFAULTS = {"close_px": 11, "mask_alpha_min": int(round(DEFAULTS.mask_alpha_min * 100))}
@@ -163,6 +193,8 @@ class MainWindow(QMainWindow):
         self._assist_undo = {}
         self._selection_edit = None
         self._ui_busy = False
+        self.wevisone = wevisone_client.Service()
+        self._warm_thread: _ServiceWarmThread | None = None
 
         self.page_list = QListWidget()
         self.page_list.currentRowChanged.connect(self.show_page)
@@ -415,12 +447,16 @@ class MainWindow(QMainWindow):
 
     # ---- 参数面板 -------------------------------------------------------
 
-    def _build_param_box(self) -> QGroupBox:
-        box = QGroupBox("处理参数")
-        grid = QGridLayout(box)
-        grid.setVerticalSpacing(3)
-        grid.setColumnStretch(1, 1)
-        for row, (attr, label, lo, hi, step, unit, stage) in enumerate(KNOBS):
+    def _build_param_box(self) -> QWidget:
+        box = QWidget()
+        box.setObjectName("panel")
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        knob_by_attr = {k[0]: k for k in KNOBS}
+
+        def add_knob(grid, row, attr):
+            _, label, lo, hi, step, unit, _stage = knob_by_attr[attr]
             caption = QLabel(label)
             value = QLabel()
             value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -441,40 +477,140 @@ class MainWindow(QMainWindow):
             grid.addWidget(value, row * 2, 2)
             grid.addWidget(s, row * 2 + 1, 0, 1, 3)
             self._sliders[attr] = s
-        row = len(KNOBS) * 2
-        self.ocr_box = QCheckBox("文字识别")
-        self.ocr_box.setChecked(True)
-        grid.addWidget(self.ocr_box, row, 0, 1, 3)
-        row += 1
-        self.recall_box = QCheckBox("补全水印笔画（允许正文交叠）")
-        self.recall_box.setChecked(True)
-        self.recall_box.setToolTip("通过颜色和重复字形补全笔画；文字框和重复行只用于搜索，不作为修复选区。外扩由上方参数控制。")
-        grid.addWidget(self.recall_box, row, 0, 1, 3)
-        if self.automatic_selection:
-            self.recall_box.hide()
-            grid.addWidget(QLabel("自动比较处理方法 · 试用版，结果需复核"), row, 0, 1, 3)
-        row += 1
-        grid.addWidget(QLabel("水印样式"), row, 0)
+            return row + 1
+
+        # 找水印：方式选择（即功能开关）＋方式专属控件＋共有检测参数
+        find_box = QGroupBox("找水印")
+        find_grid = QGridLayout(find_box)
+        find_grid.setVerticalSpacing(3)
+        find_grid.setColumnStretch(1, 1)
+        find_grid.addWidget(QLabel("找水印方式"), 0, 0)
+        self.mode_box = QComboBox()
+        for data, text in DETECTION_MODES:
+            self.mode_box.addItem(text, data)
+        self.mode_box.setToolTip("自动识别＝现有图像分析；提示词定位＝用一句话告诉本地模型水印在哪。"
+                                 "模型框只作搜索范围，最终选区仍由图中像素证据决定。")
+        find_grid.addWidget(self.mode_box, 0, 1, 1, 2)
+        self.service_box = QComboBox()
+        for data, text in SERVICE_MODES:
+            self.service_box.addItem(text, data)
+        self.service_box.setToolTip("常驻服务＝选中即预热，切回自动识别或退出程序时停止；"
+                                    "按需启动＝每轮处理启动一次、跑完即停。")
+        find_grid.addWidget(QLabel("服务方式"), 1, 0)
+        find_grid.addWidget(self.service_box, 1, 1, 1, 2)
+        self.prompt_edit = QLineEdit()
+        self.prompt_edit.setPlaceholderText("描述要去除的水印文字，如：验证素材 3409")
+        self.prompt_edit.setToolTip("提示词交给本地 WeVisOne-VL-2B 模型找水印实例；只在本机处理。")
+        find_grid.addWidget(QLabel("提示词"), 2, 0)
+        find_grid.addWidget(self.prompt_edit, 2, 1, 1, 2)
         self.style_box = QComboBox()
         self.style_box.setEditable(True)
         self.style_box.addItems(list(STYLE_LABELS.values()))
         self.style_box.setToolTip("自动识别会依次检查水印类型；也可选择样式或输入中文描述")
-        grid.addWidget(self.style_box, row, 1, 1, 2)
-        row += 1
+        find_grid.addWidget(QLabel("水印样式"), 3, 0)
+        find_grid.addWidget(self.style_box, 3, 1, 1, 2)
+        self.ocr_box = QCheckBox("文字识别")
+        self.ocr_box.setChecked(True)
+        find_grid.addWidget(self.ocr_box, 4, 0, 1, 3)
+        self.recall_box = QCheckBox("补全水印笔画（允许正文交叠）")
+        self.recall_box.setChecked(True)
+        self.recall_box.setToolTip("通过颜色和重复字形补全笔画；文字框和重复行只用于搜索，不作为修复选区。外扩由上方参数控制。")
+        find_grid.addWidget(self.recall_box, 5, 0, 1, 3)
+        if self.automatic_selection:
+            self.recall_box.hide()
+            find_grid.addWidget(QLabel("自动比较处理方法 · 试用版，结果需复核"), 5, 0, 1, 3)
+        row = 6
+        for attr in PARAM_GROUPS[0][1]:
+            row = add_knob(find_grid, row, attr)
+        layout.addWidget(find_box)
+
+        for group_title in ("去水印", "修复底图"):
+            group_box = QGroupBox(group_title)
+            grid = QGridLayout(group_box)
+            grid.setVerticalSpacing(3)
+            grid.setColumnStretch(1, 1)
+            row = 0
+            for attr in dict(PARAM_GROUPS)[group_title]:
+                row = add_knob(grid, row, attr)
+            layout.addWidget(group_box)
+        layout.addStretch(1)
+
+        buttons = QGridLayout()
         self.reprocess_btn = QPushButton("处理／重处理当前图片")
         self.reprocess_btn.clicked.connect(lambda: self.start_run(only_page=self._current))
         self.reprocess_btn.setEnabled(False)
         reset = QPushButton("恢复默认")
         reset.clicked.connect(self.reset_params)
-        grid.addWidget(self.reprocess_btn, row, 0, 1, 2)
-        grid.addWidget(reset, row, 2)
+        buttons.addWidget(self.reprocess_btn, 0, 0, 1, 2)
+        buttons.addWidget(reset, 0, 2)
         self.auto_redetect_btn = QPushButton("重新自动识别当前图片")
         self.auto_redetect_btn.setToolTip("重新检测将替换该页人工选区和结果；需要保留时请先导出。")
         self.auto_redetect_btn.clicked.connect(lambda: self.start_run(
             only_page=self._current, force_automatic=True))
-        grid.addWidget(self.auto_redetect_btn, row + 1, 0, 1, 3)
+        buttons.addWidget(self.auto_redetect_btn, 1, 0, 1, 3)
         self.auto_redetect_btn.hide()
+        layout.addLayout(buttons)
+
+        self.mode_box.currentIndexChanged.connect(self._mode_changed)
+        self.service_box.currentIndexChanged.connect(self._service_mode_changed)
+        self.prompt_edit.textChanged.connect(self.save_params)
+        self._update_mode_controls()
         return box
+
+    def _update_mode_controls(self) -> None:
+        """按当前找水印方式切换专属控件显隐（样式↔服务方式+提示词互斥）。"""
+        prompt = self.mode_box.currentData() == "prompt"
+        self.service_box.setVisible(prompt)
+        self.service_box.parentWidget().layout().itemAtPosition(1, 0).widget().setVisible(prompt)
+        self.prompt_edit.setVisible(prompt)
+        self.prompt_edit.parentWidget().layout().itemAtPosition(2, 0).widget().setVisible(prompt)
+        self.style_box.setVisible(not prompt)
+        self.style_box.parentWidget().layout().itemAtPosition(3, 0).widget().setVisible(not prompt)
+
+    def _mode_changed(self) -> None:
+        self._update_mode_controls()
+        self.save_params()
+        if self.mode_box.currentData() != "prompt":
+            self._stop_wevisone("已切回自动识别，提示词模型服务已停止、显存已释放。")
+        elif self.service_box.currentData() == "resident":
+            self._warm_wevisone()
+
+    def _service_mode_changed(self) -> None:
+        self.save_params()
+        if (self.mode_box.currentData() == "prompt"
+                and self.service_box.currentData() == "resident"):
+            self._warm_wevisone()
+        elif self.service_box.currentData() == "ondemand":
+            self._stop_wevisone("已切换为按需启动，常驻服务已停止")
+
+    def _warm_wevisone(self) -> None:
+        """常驻模式：异步预热模型服务，就绪前状态栏可见。"""
+        if not wevisone_client.Service.available():
+            self.status.setText("提示词定位不可用：未找到 WeVisOne 环境"
+                                "（out/third_party/WeVisOne-VL），可先改用自动识别。")
+            return
+        if self.wevisone.running or self._warm_thread is not None:
+            return
+        self.status.setText("提示词模型启动中…（首次加载约 20–60 秒）")
+        self._warm_thread = _ServiceWarmThread(self.wevisone, self)
+        self._warm_thread.done.connect(self._warm_finished)
+        self._warm_thread.start()
+
+    def _warm_finished(self, error: str) -> None:
+        self._warm_thread = None
+        if error:
+            self.status.setText(f"提示词模型启动失败：{error}")
+        elif self.mode_box.currentData() == "prompt":
+            self.status.setText("提示词模型已就绪（常驻）。")
+
+    def _stop_wevisone(self, message: str | None = None) -> None:
+        if self._warm_thread is not None:
+            self._warm_thread.terminate = True
+            self._warm_thread = None
+        if self.wevisone.running:
+            self.wevisone.stop()
+            if message:
+                self.status.setText(message)
 
     def current_thr(self) -> Thresholds:
         vals = {attr: s.value() for attr, s in self._sliders.items()}
@@ -493,6 +629,15 @@ class MainWindow(QMainWindow):
         from .styles import parse_style_prompt
         return parse_style_prompt(self.style_box.currentText())
 
+    def current_detection_mode(self) -> str:
+        return self.mode_box.currentData() or "auto"
+
+    def current_service_mode(self) -> str:
+        return self.service_box.currentData() or "resident"
+
+    def current_prompt(self) -> str:
+        return self.prompt_edit.text().strip()
+
     def reset_params(self) -> None:
         for attr, s in self._sliders.items():
             s.setValue(_knob_default(attr))
@@ -507,15 +652,24 @@ class MainWindow(QMainWindow):
             self._clear_assisted_preview()
         params = {attr: slider.value() for attr, slider in self._sliders.items()}
         style = self.current_style()
+        detection_mode = self.current_detection_mode()
+        prompt_query = self.current_prompt()
+        service_mode = self.current_service_mode()
+        # 影响检测结果的因素变化都要丢掉可复用的共享掩码；服务方式只影响资源占用，不算。
         if (any(self.batch.params.get(k) != params[k] for k in ("mask_alpha_min", "close_px"))
                 or self.batch.use_ocr != self.ocr_box.isChecked()
                 or self.batch.recall_priority != self.recall_box.isChecked()
-                or self.batch.style != style):
+                or self.batch.style != style
+                or self.batch.detection_mode != detection_mode
+                or self.batch.prompt_query != prompt_query):
             self.batch.invalidate()
         self.batch.params = params
         self.batch.use_ocr = self.ocr_box.isChecked()
         self.batch.recall_priority = self.recall_box.isChecked()
         self.batch.style = style
+        self.batch.detection_mode = detection_mode
+        self.batch.prompt_query = prompt_query
+        self.batch.service_mode = service_mode
         self.render_canvas()
 
     def select_batch(self, row: int) -> None:
@@ -530,7 +684,13 @@ class MainWindow(QMainWindow):
         self.ocr_box.setChecked(self.batch.use_ocr if self.batch else True)
         self.recall_box.setChecked(self.batch.recall_priority if self.batch else True)
         self.style_box.setCurrentText(STYLE_LABELS.get(self.batch.style if self.batch else None, "自动识别"))
+        self.mode_box.setCurrentIndex(max(0, self.mode_box.findData(
+            self.batch.detection_mode if self.batch else "auto")))
+        self.service_box.setCurrentIndex(max(0, self.service_box.findData(
+            self.batch.service_mode if self.batch else "resident")))
+        self.prompt_edit.setText(self.batch.prompt_query if self.batch else "")
         self._loading_params = False
+        self._update_mode_controls()
         self.page_list.clear()
         if self.batch:
             for i, page in enumerate(self.pages):
@@ -942,6 +1102,14 @@ class MainWindow(QMainWindow):
             indices = [i for i in indices if 0 <= i < len(batch.pages)]
             if not indices:
                 continue
+            if batch.detection_mode == "prompt":
+                if not batch.prompt_query.strip():
+                    self.status.setText("提示词定位需要先输入提示词（找水印方式下方的输入框）。")
+                    continue
+                if not wevisone_client.Service.available():
+                    self.status.setText("提示词定位不可用：未找到 WeVisOne 环境"
+                                        "（out/third_party/WeVisOne-VL），已跳过该批次。")
+                    continue
             vals = batch.params
             thr = Thresholds(mask_alpha_min=vals["mask_alpha_min"] / 100,
                              lama_context_margin=vals["lama_context_margin"],
@@ -952,7 +1120,9 @@ class MainWindow(QMainWindow):
             jobs.append(job + (True,) if self.automatic_selection else job)
         if not jobs:
             return
-        self.worker = BatchWorker(jobs, self, record_batch_timing=only_page is None)
+        uses_prompt = any(job[0].detection_mode == "prompt" for job in jobs)
+        self.worker = BatchWorker(jobs, self, record_batch_timing=only_page is None,
+                                  service=self.wevisone if uses_prompt else None)
         self.worker.update.connect(self.queue_update)
         self.worker.finished.connect(self.on_finished)
         self.progress.setRange(0, self.worker.total)
@@ -1049,6 +1219,8 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.Yes:
                 event.ignore()
                 return
+        # 常驻服务随程序退出停止，释放显存。
+        self._stop_wevisone()
         event.accept()
 
     def show_page(self, row: int) -> None:
@@ -1187,6 +1359,7 @@ class MainWindow(QMainWindow):
             selected = proposal.layer.binary(proposal.thresholds.mask_alpha_min) > 0
             img = overlay_mask(result.output.image, selected.astype(np.float32))
             self.canvas.set_images(img, page_key=(self.batch.uid, row), caption="候选笔画·尚未修复")
+            self.canvas.set_instance_boxes([])
             self.preview_hint.setText("红色为将要修复的候选笔画，黄框仅为搜索范围。请确认没有误选背景；确认前图片不变。")
             return
         mode = self._view_mode
@@ -1226,6 +1399,12 @@ class MainWindow(QMainWindow):
             self.preview_hint.setText("红色为该处理结果使用的完整选区，包含人工添加与擦除的修改。")
         else:
             self.canvas.set_selection_overlay()
+        boxes = []
+        if (result is not None and mode == "水印选区"
+                and result.mask.method == prompt_detect.METHOD):
+            # 提示词定位：橙色实线框＝模型给出的实例位置（仅显示，红色才是选区）。
+            boxes = [instance.bbox for instance in result.mask.instances]
+        self.canvas.set_instance_boxes(boxes)
 
 
 def smoke(path: str | None, *, automatic_selection: bool = False) -> int:

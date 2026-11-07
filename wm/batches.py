@@ -23,6 +23,11 @@ class Batch:
     use_ocr: bool = True
     style: str | None = None
     recall_priority: bool = True
+    # 找水印方式：auto＝自动识别（默认）；prompt＝提示词定位（WeVisOne）。
+    detection_mode: str = "auto"
+    prompt_query: str = ""
+    # 提示词模型服务方式：resident＝常驻（随方式选择启停）；ondemand＝每轮启动。
+    service_mode: str = "resident"
     results: dict[int, PageResult] = field(default_factory=dict)
     errors: dict[int, str] = field(default_factory=dict)
     states: dict[int, str] = field(default_factory=dict)
@@ -37,7 +42,8 @@ class Batch:
 class BatchWorker(QThread):
     update = Signal(object)
 
-    def __init__(self, jobs, parent=None, *, record_batch_timing: bool = False):
+    def __init__(self, jobs, parent=None, *, record_batch_timing: bool = False,
+                 service=None):
         super().__init__(parent)
         self.jobs = jobs  # (batch, selected indices, frozen thresholds, close_px, OCR, style)
         self.total = sum(len(indices) for _, indices, *_ in jobs)
@@ -48,6 +54,9 @@ class BatchWorker(QThread):
         self._condition = Condition()
         self._record_batch_timing = record_batch_timing
         self._active_timing: BatchTiming | None = None
+        # 提示词定位共用的模型服务；常驻模式由 GUI 预热，按需模式由本线程启停。
+        self._service = service
+        self._owned_service = False
 
     def pause(self, paused: bool) -> None:
         with self._condition:
@@ -77,6 +86,33 @@ class BatchWorker(QThread):
             if self._active_timing is not None:
                 self._active_timing.finish(stopped=True)
                 self._active_timing = None
+            if self._owned_service and self._service is not None:
+                self._service.stop()
+                self._owned_service = False
+
+    def _prompt_mask(self, page, batch, thr, close_px, use_ocr, index):
+        """提示词定位：模型框只给搜索范围，选区由框内像素证据产生。"""
+        from . import prompt_detect
+        from .wevisone_client import ServiceDied
+
+        service = self._service
+        if service is None:
+            raise RuntimeError("提示词模型服务未配置。")
+        try:
+            if not service.running:
+                self.update.emit(dict(kind="stage", batch=batch.uid, index=index,
+                                      message="启动提示词模型服务（含加载模型）"))
+                service.start()
+                self._owned_service = True
+            return prompt_detect.locate_strokes(page.image, batch.prompt_query, service,
+                                                thr, close_px=close_px, use_ocr=use_ocr)
+        except ServiceDied:
+            # 常驻服务崩溃：重启一次再试；仍失败则按运行失败上抛。
+            service.stop()
+            service.start()
+            self._owned_service = True
+            return prompt_detect.locate_strokes(page.image, batch.prompt_query, service,
+                                                thr, close_px=close_px, use_ocr=use_ocr)
 
     def _run_jobs(self) -> None:
         for job in self.jobs:
@@ -102,7 +138,24 @@ class BatchWorker(QThread):
                     self.update.emit(dict(kind="stage", batch=batch.uid, index=index,
                                           message="检查 PDF 透明文字对象"))
                     result = structure.process_text_page(page, thr)
-                    if result is None:
+                    if result is None and batch.detection_mode == "prompt":
+                        # 提示词定位：模型框只给搜索范围，选区来自框内像素证据；
+                        # 跨页先验不适用（各页模型框不同），逐页单算。
+                        self.update.emit(dict(kind="stage", batch=batch.uid, index=index,
+                                              message="提示词定位：调用本地模型找水印"))
+                        mask, detect_info = self._prompt_mask(page, batch, thr, close_px,
+                                                              use_ocr, index)
+                        if detect_info["boxes_with_support"] == 0:
+                            self.update.emit(dict(
+                                kind="stage", batch=batch.uid, index=index,
+                                message=(f"模型给出 {len(detect_info['model_boxes'])} 个框，"
+                                         "框内未找到足够证据的笔画")))
+                        mask_ms = int((perf_counter() - started) * 1000)
+                        if not self._checkpoint():
+                            return
+                        result = pipeline._process_one(page, mask, thr, mask_ms=mask_ms)
+                        result.processing["prompt_detection"] = detect_info
+                    elif result is None:
                         self.update.emit(dict(kind="stage", batch=batch.uid, index=index,
                                               message="统计同尺寸组跨页先验" if len(group) > 1 else "单张组：单图识别"))
                         if len(group) > 1:

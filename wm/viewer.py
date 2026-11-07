@@ -41,6 +41,7 @@ class ImageViewer(QWidget):
         self._page_key = None
         self.selection_mode = False
         self.search_rectangle = None
+        self.instance_boxes: list[tuple[int, int, int, int]] = []
         self._selection_start = None
         self.zoom = 1.0
         self.pan = QPointF()
@@ -148,6 +149,11 @@ class ImageViewer(QWidget):
         self._selection_start = None
         self.update()
 
+    def set_instance_boxes(self, boxes):
+        """模型给出的水印实例框（原图像素坐标），仅显示，不构成选区。"""
+        self.instance_boxes = [tuple(int(v) for v in box) for box in (boxes or [])]
+        self.update()
+
     def _image_point(self, point):
         rect = self.image_rect()
         return (max(0., min(float(self.before.width()),
@@ -172,6 +178,7 @@ class ImageViewer(QWidget):
             self.set_fraction(0.5)
             self.clear_search_rectangle()
             self.set_selection_mode(False)
+            self.set_instance_boxes([])
         self._page_key = page_key
         self.before = QPixmap.fromImage(to_qimage(before))
         self.after = QPixmap.fromImage(to_qimage(after)) if after is not None else QPixmap()
@@ -425,6 +432,15 @@ class ImageViewer(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.setPen(QPen(QColor('#ffd17a'), 2, Qt.DashLine))
             painter.drawRect(box)
+        if self.instance_boxes:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor('#ff9f43'), 2))
+            for x0, y0, x1, y1 in self.instance_boxes:
+                box = QRectF(rect.left()+x0*rect.width()/self.before.width(),
+                             rect.top()+y0*rect.height()/self.before.height(),
+                             (x1-x0)*rect.width()/self.before.width(),
+                             (y1-y0)*rect.height()/self.before.height())
+                painter.drawRect(box)
         if self.brush_mode and self._hover is not None and rect.contains(self._hover):
             radius = self.brush_diameter*self.image_scale()/2
             painter.setBrush(Qt.NoBrush)
