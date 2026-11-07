@@ -1351,11 +1351,14 @@ class MainWindow(QMainWindow):
     def _page_item(self, index):
         page = self.pages[index]
         state = self.batch.states.get(index, "未处理")
-        # 同一文档（多页 PDF）展开成多条时，文字上直接带页码区分
-        same_doc = sum(1 for p in self.pages if p.doc_id == page.doc_id)
-        name = f"{page.doc_id}·第{page.page_index + 1}页" if same_doc > 1 else page.doc_id
+        # 同一文档（多页 PDF）展开成多条时，文字上直接带页码区分；
+        # page_index 被 load_many 按批次全局重编，这里按同文档内的
+        # 导入顺序重新计算"第 N 页"（相对所属文件，从 1 开始）。
+        same_doc = [p for p in self.pages if p.doc_id == page.doc_id]
+        page_no = next(i for i, p in enumerate(same_doc) if p is page) + 1
+        name = f"{page.doc_id}·第{page_no}页" if len(same_doc) > 1 else page.doc_id
         item = QListWidgetItem(f"{index + 1:02d}  {name}\n{state}")
-        item.setToolTip(f"{page.doc_id} · 第 {page.page_index + 1} 页 · {state}")
+        item.setToolTip(f"{page.doc_id} · 第 {page_no} 页 · {state}")
         colors = {"运行失败": "#ae4940", "质量未通过": "#ae4940",
                   "待复核": "#967329", "通过": "#287d55",
                   "辅助修复·待复核": "#967329", "辅助修复·检查未通过": "#ae4940"}

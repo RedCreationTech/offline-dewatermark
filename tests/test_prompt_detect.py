@@ -349,9 +349,10 @@ class PromptPanelTests(unittest.TestCase):
 
     def test_multi_page_doc_labels_carry_page_number(self):
         from wm.contract import PageImage
-        pages = [PageImage(np.zeros((40, 50, 3), np.uint8), 72, 'real_009', page_index=i)
+        # 模拟真实场景：load_many 把 page_index 重编成批次全局序号（8/9/10）
+        pages = [PageImage(np.zeros((40, 50, 3), np.uint8), 72, 'real_009', page_index=8 + i)
                  for i in range(3)]
-        pages.append(PageImage(np.zeros((40, 50, 3), np.uint8), 72, 'real_006'))
+        pages.append(PageImage(np.zeros((40, 50, 3), np.uint8), 72, 'real_006', page_index=5))
         batch = Batch('多页', pages)
         self.win.batches = [batch]
         self.win.refresh_batches()
@@ -360,6 +361,7 @@ class PromptPanelTests(unittest.TestCase):
         self.app.processEvents()
         texts = [self.win.page_list.item(i).text() for i in range(4)]
         self.assertIn('real_009·第1页', texts[0])
+        self.assertIn('real_009·第2页', texts[1])
         self.assertIn('real_009·第3页', texts[2])
         self.assertIn('real_006', texts[3])
         self.assertNotIn('第1页', texts[3])
