@@ -44,6 +44,7 @@ class SelectionEdit:
             self.overrides[current & ~self.automatic] = 1
             self.overrides[~current & self.automatic] = 0
         self.selected = current.copy()
+        self.last_change = (True, 0)  # 最近一笔的 (是否添加, 像素数)，供界面反馈
         self.undo_stack = []
         self.redo_stack = []
         self._stroke = None
@@ -82,6 +83,7 @@ class SelectionEdit:
         region[hit] = int(include)
         self.selected[y0:y1, x0:x1][hit] = include
         self._stroke.append((x0, y0, x1, y1, before, region.copy()))
+        self.last_change = (bool(include), int((hit & (before != int(include))).sum()))
         return x0, y0, x1, y1
 
     def end_stroke(self):

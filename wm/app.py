@@ -961,7 +961,12 @@ class MainWindow(QMainWindow):
             box = self._selection_edit.paint(*segment)
             if box is not None:
                 self.canvas.update_selection_overlay(self._selection_edit.selected, box)
-            self.selection_notice.setText("选区已修改，尚未处理；切图丢弃。红色为当前完整选区。")
+                include, changed = self._selection_edit.last_change
+                total = int(self._selection_edit.selected.sum())
+                action = "添加" if include else "擦除"
+                self.selection_notice.setText(
+                    f"本笔{action} {changed:,} 像素 · 当前选中 {total:,} 像素；"
+                    "尚未处理，切图丢弃。")
 
     def _end_brush_stroke(self):
         if self._selection_edit is not None:
@@ -1414,14 +1419,17 @@ class MainWindow(QMainWindow):
         self.canvas.set_brush_mode(editing and editable_view and not self._assist_busy,
                                    include=self.add_brush_btn.isChecked())
         if editing:
-            self.canvas.set_selection_overlay(self._selection_edit.selected if editable_view else None)
+            # 编辑态用高对比青色显示选区：红色叠加在黑色笔画上几乎不可见，
+            # 青色在白底和黑笔画上都清楚，用户能确认每一笔覆盖了哪里。
+            self.canvas.set_selection_overlay(self._selection_edit.selected if editable_view else None,
+                                              color=(0, 190, 255))
             self.selection_notice.setText(
-                "选区已修改，尚未处理；切图丢弃。红色为当前完整选区。" if self._selection_edit.dirty else
+                "选区已修改，尚未处理；切图丢弃。青色为当前完整选区。" if self._selection_edit.dirty else
                 "编辑完整选区：添加或擦除，最后一笔优先；点击处理才更新图片。")
             self.preview_hint.setText("滚轮缩放 · 空格＋拖动平移 · B 添加 / E 擦除 · 按住 H 隐藏选区 · ⌘/Ctrl＋Z 撤销" if editable_view else
                                       "正在查看已有处理结果；切回原始图片或水印选区继续描涂，编辑仍保留。")
         elif result is not None and result.mask.selection is not None and mode == "水印选区":
-            self.canvas.set_selection_overlay(result.mask.selection)
+            self.canvas.set_selection_overlay(result.mask.selection, color=(255, 40, 40))
             self.preview_hint.setText("红色为该处理结果使用的完整选区，包含人工添加与擦除的修改。")
         else:
             self.canvas.set_selection_overlay()

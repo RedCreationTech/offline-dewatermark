@@ -50,6 +50,7 @@ class ImageViewer(QWidget):
         self.brush_diameter = 12
         self.magnifier_enabled = True
         self._overlay = QPixmap()
+        self._overlay_color = (255, 40, 40)  # 默认红；编辑态由 app 传高对比色
         self._hide_overlay = False
         self._hover = None
         self._painting = False
@@ -69,12 +70,15 @@ class ImageViewer(QWidget):
                        Qt.SplitHCursor if self.comparing else Qt.ArrowCursor)
         self.update()
 
-    def set_selection_overlay(self, selected=None):
+    def set_selection_overlay(self, selected=None, *, color=None):
+        # color: (r,g,b)，编辑态传高对比色；不传则沿用默认红
+        if color is not None:
+            self._overlay_color = tuple(color)
         if selected is None:
             self._overlay = QPixmap()
         else:
             rgba = np.zeros((*selected.shape, 4), np.uint8)
-            rgba[..., :3] = [255, 40, 40]
+            rgba[..., :3] = self._overlay_color
             rgba[..., 3] = np.where(selected, 105, 0)
             self._overlay = QPixmap.fromImage(QImage(
                 rgba.data, rgba.shape[1], rgba.shape[0], rgba.shape[1]*4,
@@ -87,7 +91,7 @@ class ImageViewer(QWidget):
             return
         x0, y0, x1, y1 = box
         rgba = np.zeros((y1-y0, x1-x0, 4), np.uint8)
-        rgba[..., :3] = [255, 40, 40]
+        rgba[..., :3] = self._overlay_color
         rgba[..., 3] = np.where(selected[y0:y1, x0:x1], 105, 0)
         patch = QImage(rgba.data, x1-x0, y1-y0, (x1-x0)*4, QImage.Format_RGBA8888)
         painter = QPainter(self._overlay)
