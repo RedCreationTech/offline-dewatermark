@@ -26,6 +26,8 @@ class Batch:
     # 找水印方式：auto＝自动识别（默认）；prompt＝提示词定位（WeVisOne）。
     detection_mode: str = "auto"
     prompt_query: str = ""
+    # 提示词模式的处理方式：strokes＝按笔画（默认）；box＝整框重绘。
+    prompt_treatment: str = "strokes"
     # 提示词模型服务方式：resident＝常驻（随方式选择启停）；ondemand＝每轮启动。
     service_mode: str = "resident"
     results: dict[int, PageResult] = field(default_factory=dict)
@@ -104,15 +106,25 @@ class BatchWorker(QThread):
                                       message="启动提示词模型服务（含加载模型）"))
                 service.start()
                 self._owned_service = True
-            return prompt_detect.locate_strokes(page.image, batch.prompt_query, service,
-                                                thr, close_px=close_px, use_ocr=use_ocr)
+            layer, info = prompt_detect.locate_strokes(
+                page.image, batch.prompt_query, service, thr,
+                close_px=close_px, use_ocr=use_ocr,
+                treatment=batch.prompt_treatment)
         except ServiceDied:
             # 常驻服务崩溃：重启一次再试；仍失败则按运行失败上抛。
             service.stop()
             service.start()
             self._owned_service = True
-            return prompt_detect.locate_strokes(page.image, batch.prompt_query, service,
-                                                thr, close_px=close_px, use_ocr=use_ocr)
+            layer, info = prompt_detect.locate_strokes(
+                page.image, batch.prompt_query, service, thr,
+                close_px=close_px, use_ocr=use_ocr,
+                treatment=batch.prompt_treatment)
+        if (info.get("treatment") == "box" and info.get("text_overlap_ratio", 0) > 0.03):
+            self.update.emit(dict(
+                kind="stage", batch=batch.uid, index=index,
+                message=(f"整框重绘覆盖约 {info['text_overlap_ratio']:.0%} 的正文区域，"
+                         "框内文字会被一并重绘")))
+        return layer, info
 
     def _run_jobs(self) -> None:
         for job in self.jobs:

@@ -66,14 +66,59 @@ class PromptDetectTests(unittest.TestCase):
         self.assertEqual(info['boxes_with_support'], 1)
         gt = alpha > 0
         tp = int((layer.footprint & gt).sum())
-        self.assertGreater(tp / gt.sum(), 0.3)
-        self.assertGreater(tp / max(1, int(layer.footprint.sum())), 0.8)
+        # 该合成页的模型框＝整页（水印铺满页且压住照片块/表格），按笔画生长会把
+        # 与笔画连通的内容区少量卷入：recall 提升是第一目标，precision 允许折中。
+        self.assertGreater(tp / gt.sum(), 0.55)
+        self.assertGreater(tp / max(1, int(layer.footprint.sum())), 0.15)
         self.assertEqual(layer.repair_mode, 'inpaint')
         # 选区严格在框内（不外推）
         x0, y0, x1, y1 = truth
         ys2, xs2 = np.where(layer.footprint)
         self.assertGreaterEqual(xs2.min(), x0 - 1)
         self.assertLessEqual(xs2.max(), x1 + 1)
+
+    def test_low_contrast_strokes_grow_from_strong_cores(self):
+        # 浅灰手写/打印笔画（低于 8% 覆盖阈值）应随强核整体入选
+        from PIL import Image, ImageDraw, ImageFont
+        image = np.full((240, 320, 3), 245, np.uint8)
+        pil = Image.fromarray(image)
+        draw = ImageDraw.Draw(pil)
+        try:
+            font = ImageFont.truetype("arial.ttf", 34)
+        except OSError:
+            font = ImageFont.load_default()
+        draw.text((60, 90), "DRAFT", fill=(205, 205, 205), font=font)
+        image = np.array(pil)
+        ink = (image.mean(2) < 235)
+        box = (40, 60, 300, 160)
+        layer, info = prompt_detect.locate_strokes(image, '灰字', FakeService([box]),
+                                                   Thresholds())
+        sel = layer.footprint
+        recall = int((sel & ink).sum()) / max(1, int(ink.sum()))
+        self.assertEqual(info['boxes_with_support'], 1)
+        self.assertGreater(recall, 0.5, f"淡笔画召回过低: {recall:.2f}")
+        # 证据约束：框内大片空白不得入选（文字从 x=60 起，左侧 40–55 为纯空白）
+        bx0, by0, bx1, by1 = box
+        blank = np.zeros(image.shape[:2], bool)
+        blank[by0:by1, bx0:bx0+15] = True
+        self.assertLess(int((sel & blank).sum()), 30)
+
+    def test_box_treatment_repaints_whole_box_and_reports_overlap(self):
+        image = np.full((240, 320, 3), 245, np.uint8)
+        box = (40, 60, 300, 160)
+        layer, info = prompt_detect.locate_strokes(image, '框', FakeService([box]),
+                                                   Thresholds(), treatment='box')
+        self.assertEqual(layer.method, 'prompt_box_repaint')
+        self.assertEqual(int(layer.footprint.sum()), (box[2]-box[0]) * (box[3]-box[1]))
+        self.assertEqual(info['treatment'], 'box')
+        self.assertEqual(info['boxes_with_support'], 1)
+        self.assertGreaterEqual(info['text_overlap_ratio'], 0.0)
+        # 正文重叠警告信号：OCR 区全覆盖时应为 1
+        from wm import ocr
+        with patch.object(ocr, 'text_zones', return_value=np.ones(image.shape[:2], bool)):
+            _, info2 = prompt_detect.locate_strokes(image, '框', FakeService([box]),
+                                                    Thresholds(), treatment='box')
+        self.assertEqual(info2['text_overlap_ratio'], 1.0)
 
     def test_empty_query_and_empty_boxes(self):
         image, _ = synth_page()
@@ -226,9 +271,11 @@ class PromptPanelTests(unittest.TestCase):
     def test_mode_and_prompt_persist_per_batch(self):
         self.win.prompt_edit.setText('验证素材 3409')
         self.win.mode_box.setCurrentIndex(1)
+        self.win.treatment_box.setCurrentIndex(1)  # 整框重绘
         self.app.processEvents()
         self.assertEqual(self.batch.detection_mode, 'prompt')
         self.assertEqual(self.batch.prompt_query, '验证素材 3409')
+        self.assertEqual(self.batch.prompt_treatment, 'box')
         other = Batch('o', self.batch.pages)
         self.win.batches.append(other)
         self.win.refresh_batches()
@@ -236,10 +283,18 @@ class PromptPanelTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(self.win.mode_box.currentData(), 'auto')
         self.assertEqual(self.win.prompt_edit.text(), '')
+        self.assertEqual(self.win.treatment_box.currentData(), 'strokes')
         self.win.batch_list.setCurrentRow(0)
         self.app.processEvents()
         self.assertEqual(self.win.mode_box.currentData(), 'prompt')
         self.assertEqual(self.win.prompt_edit.text(), '验证素材 3409')
+        self.assertEqual(self.win.treatment_box.currentData(), 'box')
+
+    def test_treatment_control_visible_only_in_prompt_mode(self):
+        self.assertFalse(self.win.treatment_box.isVisible())
+        self.win.mode_box.setCurrentIndex(1)
+        self.app.processEvents()
+        self.assertTrue(self.win.treatment_box.isVisible())
 
     def test_start_run_aborts_without_prompt(self):
         self.win.mode_box.setCurrentIndex(1)

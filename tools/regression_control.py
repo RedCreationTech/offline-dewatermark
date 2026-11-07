@@ -42,7 +42,8 @@ def load(path):
 def save(path, value):
     path = Path(path)
     temp = path.with_suffix('.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n',
+                    encoding='utf-8')
     temp.replace(path)
 
 
@@ -376,7 +377,7 @@ def write_report(out, run, old=None, gate=None):
         if gate.get('scope', 'all') != 'all':
             summary = f'日常局部检查：{"通过" if gate["check_passed"] else "未通过"}；范围 {gate["scope"]}；退化/异常 {gate["failed_pages"]}，变化待复核 {gate["review_pages"]}。本结果不能用于更新默认基线。'
     content = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>项目防退化控制报告</title><style>body{font:15px/1.7 system-ui;max-width:1600px;margin:30px auto;padding:20px;background:#f2f5f7;color:#243b46}article{background:white;padding:20px;margin:20px 0;border-radius:10px}.figs{display:flex;gap:12px;flex-wrap:wrap}figure{margin:0;flex:1;min-width:200px}img{width:100%;height:320px;object-fit:contain}pre{white-space:pre-wrap;overflow-wrap:anywhere}h2{font-size:17px;overflow-wrap:anywhere}</style><h1>项目防退化控制报告 · ' + escape(run['created_at']) + '</h1><p>' + escape(summary) + '</p><p>模式：桌面默认、桌面关闭增强、CLI 默认。逐张比较，任何明显退化阻断；输出、选区或路径变化待复核。像素误差不是水印残留率，未知质量保持未评估；所有样本均不作独立泛化证明。</p><pre>' + escape(json.dumps({k: v for k, v in (gate or {}).items() if k != 'cases'}, ensure_ascii=False, indent=2)) + '</pre>' + ''.join(cards) + '</html>'
-    (out / '项目防退化控制报告.html').write_text(content)
+    (out / '项目防退化控制报告.html').write_text(content, encoding='utf-8')
 
 
 def compare(candidate, baseline, out, reviews=None):

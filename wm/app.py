@@ -503,23 +503,31 @@ class MainWindow(QMainWindow):
         self.prompt_edit.setToolTip("提示词交给本地 WeVisOne-VL-2B 模型找水印实例；只在本机处理。")
         find_grid.addWidget(QLabel("提示词"), 2, 0)
         find_grid.addWidget(self.prompt_edit, 2, 1, 1, 2)
+        self.treatment_box = QComboBox()
+        for data, text in (("strokes", "按笔画（推荐）"), ("box", "整框重绘")):
+            self.treatment_box.addItem(text, data)
+        self.treatment_box.setToolTip("按笔画＝只修框内有像素证据的笔画，压正文处会保守保留；"
+                                      "整框重绘＝整个模型框交给 AI 重绘，框内是空白底时最干净，"
+                                      "但框若压着正文，正文会被一并重绘。")
+        find_grid.addWidget(QLabel("处理方式"), 3, 0)
+        find_grid.addWidget(self.treatment_box, 3, 1, 1, 2)
         self.style_box = QComboBox()
         self.style_box.setEditable(True)
         self.style_box.addItems(list(STYLE_LABELS.values()))
         self.style_box.setToolTip("自动识别会依次检查水印类型；也可选择样式或输入中文描述")
-        find_grid.addWidget(QLabel("水印样式"), 3, 0)
-        find_grid.addWidget(self.style_box, 3, 1, 1, 2)
+        find_grid.addWidget(QLabel("水印样式"), 4, 0)
+        find_grid.addWidget(self.style_box, 4, 1, 1, 2)
         self.ocr_box = QCheckBox("文字识别")
         self.ocr_box.setChecked(True)
-        find_grid.addWidget(self.ocr_box, 4, 0, 1, 3)
+        find_grid.addWidget(self.ocr_box, 5, 0, 1, 3)
         self.recall_box = QCheckBox("补全水印笔画（允许正文交叠）")
         self.recall_box.setChecked(True)
         self.recall_box.setToolTip("通过颜色和重复字形补全笔画；文字框和重复行只用于搜索，不作为修复选区。外扩由上方参数控制。")
-        find_grid.addWidget(self.recall_box, 5, 0, 1, 3)
+        find_grid.addWidget(self.recall_box, 6, 0, 1, 3)
         if self.automatic_selection:
             self.recall_box.hide()
-            find_grid.addWidget(QLabel("自动比较处理方法 · 试用版，结果需复核"), 5, 0, 1, 3)
-        row = 6
+            find_grid.addWidget(QLabel("自动比较处理方法 · 试用版，结果需复核"), 6, 0, 1, 3)
+        row = 7
         for attr in PARAM_GROUPS[0][1]:
             row = add_knob(find_grid, row, attr)
         layout.addWidget(find_box)
@@ -554,18 +562,22 @@ class MainWindow(QMainWindow):
         self.mode_box.currentIndexChanged.connect(self._mode_changed)
         self.service_box.currentIndexChanged.connect(self._service_mode_changed)
         self.prompt_edit.textChanged.connect(self.save_params)
+        self.treatment_box.currentIndexChanged.connect(self.save_params)
         self._update_mode_controls()
         return box
 
     def _update_mode_controls(self) -> None:
-        """按当前找水印方式切换专属控件显隐（样式↔服务方式+提示词互斥）。"""
+        """按当前找水印方式切换专属控件显隐（样式↔服务方式/提示词/处理方式互斥）。"""
         prompt = self.mode_box.currentData() == "prompt"
+        grid = self.service_box.parentWidget().layout()
         self.service_box.setVisible(prompt)
-        self.service_box.parentWidget().layout().itemAtPosition(1, 0).widget().setVisible(prompt)
+        grid.itemAtPosition(1, 0).widget().setVisible(prompt)
         self.prompt_edit.setVisible(prompt)
-        self.prompt_edit.parentWidget().layout().itemAtPosition(2, 0).widget().setVisible(prompt)
+        grid.itemAtPosition(2, 0).widget().setVisible(prompt)
+        self.treatment_box.setVisible(prompt)
+        grid.itemAtPosition(3, 0).widget().setVisible(prompt)
         self.style_box.setVisible(not prompt)
-        self.style_box.parentWidget().layout().itemAtPosition(3, 0).widget().setVisible(not prompt)
+        grid.itemAtPosition(4, 0).widget().setVisible(not prompt)
 
     def _mode_changed(self) -> None:
         self._update_mode_controls()
@@ -638,6 +650,9 @@ class MainWindow(QMainWindow):
     def current_prompt(self) -> str:
         return self.prompt_edit.text().strip()
 
+    def current_treatment(self) -> str:
+        return self.treatment_box.currentData() or "strokes"
+
     def reset_params(self) -> None:
         for attr, s in self._sliders.items():
             s.setValue(_knob_default(attr))
@@ -655,13 +670,15 @@ class MainWindow(QMainWindow):
         detection_mode = self.current_detection_mode()
         prompt_query = self.current_prompt()
         service_mode = self.current_service_mode()
+        prompt_treatment = self.current_treatment()
         # 影响检测结果的因素变化都要丢掉可复用的共享掩码；服务方式只影响资源占用，不算。
         if (any(self.batch.params.get(k) != params[k] for k in ("mask_alpha_min", "close_px"))
                 or self.batch.use_ocr != self.ocr_box.isChecked()
                 or self.batch.recall_priority != self.recall_box.isChecked()
                 or self.batch.style != style
                 or self.batch.detection_mode != detection_mode
-                or self.batch.prompt_query != prompt_query):
+                or self.batch.prompt_query != prompt_query
+                or self.batch.prompt_treatment != prompt_treatment):
             self.batch.invalidate()
         self.batch.params = params
         self.batch.use_ocr = self.ocr_box.isChecked()
@@ -670,6 +687,7 @@ class MainWindow(QMainWindow):
         self.batch.detection_mode = detection_mode
         self.batch.prompt_query = prompt_query
         self.batch.service_mode = service_mode
+        self.batch.prompt_treatment = prompt_treatment
         self.render_canvas()
 
     def select_batch(self, row: int) -> None:
@@ -689,6 +707,8 @@ class MainWindow(QMainWindow):
         self.service_box.setCurrentIndex(max(0, self.service_box.findData(
             self.batch.service_mode if self.batch else "resident")))
         self.prompt_edit.setText(self.batch.prompt_query if self.batch else "")
+        self.treatment_box.setCurrentIndex(max(0, self.treatment_box.findData(
+            self.batch.prompt_treatment if self.batch else "strokes")))
         self._loading_params = False
         self._update_mode_controls()
         self.page_list.clear()
