@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import math
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 
@@ -404,9 +404,11 @@ class ImageViewer(QWidget):
             return
         rect = self.image_rect()
         painter.save()
-        # 顶部只留 8px 边距：原先 54px 的顶带会让放大后的图片顶部被永久遮住
-        # （"处理前/处理后"标签在裁剪区外绘制，浮于图片上方，不影响）。
-        painter.setClipRect(QRectF(self.rect()).adjusted(4, 8, -4, -8))
+        # 按圆角矩形路径精确裁剪：矩形边距裁剪会在放大时留下可见的深色边条，
+        # 路径裁剪让图片顶/底/边都能完整 pan 到，四角保持圆角。
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 15, 15)
+        painter.setClipPath(clip_path)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, self.image_scale() < 1)
         painter.drawPixmap(rect, self.after if self.comparing else self.before,
                            QRectF(self.before.rect()))
