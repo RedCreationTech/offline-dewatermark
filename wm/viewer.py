@@ -404,7 +404,9 @@ class ImageViewer(QWidget):
             return
         rect = self.image_rect()
         painter.save()
-        painter.setClipRect(QRectF(self.rect()).adjusted(4, 54, -4, -4))
+        # 顶部只留 8px 边距：原先 54px 的顶带会让放大后的图片顶部被永久遮住
+        # （"处理前/处理后"标签在裁剪区外绘制，浮于图片上方，不影响）。
+        painter.setClipRect(QRectF(self.rect()).adjusted(4, 8, -4, -8))
         painter.setRenderHint(QPainter.SmoothPixmapTransform, self.image_scale() < 1)
         painter.drawPixmap(rect, self.after if self.comparing else self.before,
                            QRectF(self.before.rect()))
