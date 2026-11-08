@@ -23,10 +23,7 @@ class FakeSession:
 
 class MaskContractTraceTests(unittest.TestCase):
     def check_capture(self, shape, dilation):
-        # 非均匀底纹：平坦纸面会被"纸面直填"短路（不走 LaMa），
-        # 本用例验证的是 LaMa 调用链路的选区几何契约，需确保模型被调用。
-        rng = np.random.RandomState(7)
-        source = (180 + rng.randint(-40, 40, (*shape, 3))).clip(0, 255).astype(np.uint8)
+        source = np.full((*shape, 3), 180, np.uint8)
         selected = np.zeros(shape, bool)
         selected[20:30, 35:49] = True
         selected[-30:-18, -49:-35] = True

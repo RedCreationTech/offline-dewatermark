@@ -135,8 +135,7 @@ def _clamp_box(box, width: int, height: int) -> tuple[int, int, int, int] | None
 def locate_strokes(image: np.ndarray, query: str, service,
                      thr: Thresholds, *, close_px: int = 11,
                      use_ocr: bool = True,
-                     treatment: str = "strokes",
-                     remove_overlap: bool = False) -> tuple[MaskLayer, dict]:
+                     treatment: str = "strokes") -> tuple[MaskLayer, dict]:
     """Run prompt detection and return (mask_layer, info).
 
     service 只需实现 segment(image_rgb, query) -> [xyxy...]，测试可传假实现。
@@ -170,7 +169,6 @@ def locate_strokes(image: np.ndarray, query: str, service,
         "detector": METHOD,
         "query": query.strip(),
         "treatment": treatment,
-        "remove_overlap": remove_overlap,
         "model_boxes": [list(b) for b, _ in raw_instances],
         "boxes_with_support": 0,
         "text_overlap_ratio": 0.0,
@@ -195,13 +193,10 @@ def locate_strokes(image: np.ndarray, query: str, service,
         domain = np.zeros(crop.shape[:2], bool)
         domain[y0 - top:y1 - top, x0 - left:x1 - left] = True
         if use_ocr and crop.shape[1] >= 200 and crop.shape[0] >= 60:
-            # estimate_single_page 不回传 text_keepout，直接取 OCR 正文区。
-            # 保护区默认约束选区生长；remove_overlap（用户显式开启）时框内
-            # 不再受保护区限制——按项目边界"允许牺牲正文/背景保护"的口径，
-            # 水印笔画全覆盖去除，交叠文字由 LaMa 重绘。
+            # estimate_single_page 不回传 text_keepout，直接取 OCR 正文区；
+            # 保护区约束选区生长。取消"文字识别"勾选可整体关闭（用户显式选择）。
             zones = ocr.text_zones(crop[..., :3])
-            protected = zones if (zones is not None and not remove_overlap) else \
-                np.zeros(crop.shape[:2], bool)
+            protected = zones if zones is not None else np.zeros(crop.shape[:2], bool)
         else:
             protected = np.zeros(crop.shape[:2], bool)
         grow_domain = domain & ~protected  # 正文保护区约束选区生长
@@ -226,20 +221,6 @@ def locate_strokes(image: np.ndarray, query: str, service,
         # （含水印伸出模型框的笔画延伸；正文行已被开运算移除）。
         scale_sel = _scale_channel(image, (x0, y0, x1, y1), box_h)
         chosen = (grown & grow_domain) | scale_sel[top:bottom, left:right]
-        if remove_overlap:
-            # 墨迹连续性扩展：remove_overlap 是用户显式的"全覆盖去除"选择，
-            # 把与已选笔画相连的墨迹（典型为穿过正文行的笔画段）并入选区；
-            # 无关的正文行不与已选笔画相连，不受影响。
-            ink_here = (crop.astype(np.float32).mean(2) <=
-                        (float(np.median(crop.astype(np.float32).mean(2))) - 50.))
-            link_domain = domain & (support_crop if support is not None else True)
-            for _ in range(3):
-                spread = cv2.dilate(chosen.astype(np.uint8),
-                                    np.ones((7, 7), np.uint8)).astype(bool)
-                add = spread & ink_here & link_domain & ~chosen
-                if not add.any():
-                    break
-                chosen |= add
         if not chosen.any():
             continue
         supported_boxes += 1

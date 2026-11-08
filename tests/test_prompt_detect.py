@@ -150,40 +150,6 @@ class PromptDetectTests(unittest.TestCase):
         if gt_hits:
             self.assertGreater(gt_hits, 500)
 
-    def test_remove_overlap_unprotects_strokes_over_text(self):
-        # 斜向笔画压正文行：remove_overlap=True 时交叠笔画入选（正文会被重绘），
-        # False 时受 OCR 保护区限制保留。
-        from PIL import Image, ImageDraw, ImageFont
-        image = np.full((300, 400, 3), 250, np.uint8)
-        pil = Image.fromarray(image)
-        draw = ImageDraw.Draw(pil)
-        font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 15)
-        big = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 44)
-        for i in range(8):
-            draw.text((30, 40 + i * 30), f'背景行 sample {100+i} value {10.5+i:.2f}', fill=(25,25,25), font=font)
-        wm_layer = Image.new("RGBA", pil.size, (0,0,0,0))
-        wdraw = ImageDraw.Draw(wm_layer)
-        wdraw.text((60, 110), "内部演示稿", fill=(20,20,20,255), font=big)
-        wm_layer = wm_layer.rotate(-25, resample=Image.BICUBIC, center=(200,150))
-        pil = Image.alpha_composite(pil.convert("RGBA"), wm_layer).convert("RGB")
-        image = np.array(pil)
-        gt = np.array(wm_layer)[..., 3] > 127
-        ys, xs = np.where(gt)
-        box = (int(xs.min())-6, int(ys.min())-6, int(xs.max())+6, int(ys.max())+6)
-        svc = FakeService([box])
-        off, _ = prompt_detect.locate_strokes(image, '斜向黑字', svc, Thresholds())
-        on, info_on = prompt_detect.locate_strokes(image, '斜向黑字', svc, Thresholds(),
-                                                   remove_overlap=True)
-        self.assertFalse(info_on.get('remove_overlap') is False)
-        self.assertGreater(int(on.footprint.sum()), int(off.footprint.sum()))
-        # 交叠笔画（gt 中与正文行同高度的笔画像素）在开启后被覆盖更多
-        line_rows = np.zeros(image.shape[:2], bool)
-        for i in range(8):
-            line_rows[40 + i*30 - 4: 40 + i*30 + 22] = True
-        cross = gt & line_rows
-        self.assertGreater(int((on.footprint & cross).sum()),
-                           int((off.footprint & cross).sum()))
-
     def test_box_treatment_repaints_whole_box_and_reports_overlap(self):
         image = np.full((240, 320, 3), 245, np.uint8)
         box = (40, 60, 300, 160)
@@ -380,25 +346,6 @@ class PromptPanelTests(unittest.TestCase):
         self.win.mode_box.setCurrentIndex(1)
         self.app.processEvents()
         self.assertTrue(self.win.treatment_box.isVisible())
-
-    def test_overlap_toggle_visible_persisted_and_default_on(self):
-        self.assertFalse(self.win.overlap_box.isVisible())
-        self.assertTrue(self.win.overlap_box.isChecked())  # 默认开启
-        self.win.mode_box.setCurrentIndex(1)
-        self.app.processEvents()
-        self.assertTrue(self.win.overlap_box.isVisible())
-        self.win.overlap_box.setChecked(False)
-        self.app.processEvents()
-        self.assertFalse(self.batch.remove_overlap)
-        other = Batch('o', self.batch.pages)
-        self.win.batches.append(other)
-        self.win.refresh_batches()
-        self.win.batch_list.setCurrentRow(1)
-        self.app.processEvents()
-        self.assertTrue(self.win.overlap_box.isChecked())  # 新批次回默认开启
-        self.win.batch_list.setCurrentRow(0)
-        self.app.processEvents()
-        self.assertFalse(self.win.overlap_box.isChecked())  # 原批次记住关闭
 
     def test_brush_paints_in_result_view_for_post_repair_touchup(self):
         # 提示词/自动处理后的修复残留只存在于结果图：处理结果视图必须可涂抹
