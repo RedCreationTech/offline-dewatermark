@@ -281,6 +281,37 @@ def _degenerate_limit(mask) -> float:
     return min(OPAQUE, (1.0 - DENOM_FLOOR) / max(1.0 - s, 1e-3))
 
 
+def _flat_components_fill(img: np.ndarray, region: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """把"坐落在均匀纸面上的修复像素"从中分出，返回 (直填掩码, 剩余掩码, 每像素纸色)。
+
+    LaMa 的统计填充在纯白纸面会留灰调污斑/噪点（提示词自动修复的黑斑即此类）。
+    用选区外环带（LaMa 实际能看到的上下文）估每个修复像素周边的局部均值/方差：
+    方差足够小说明该处压在平坦纸面上，用环带均值直填即可；压在文字/图案上的
+    像素留在剩余掩码走 LaMa。环带覆盖不足的深处像素也归 LaMa。
+    """
+    ring_all = cv2.dilate(region.astype(np.uint8), np.ones((61, 61), np.uint8)).astype(bool) & ~region
+    src = img[..., :3].astype(np.float32)
+    gray = src.mean(2)
+    # 环带里混入文字笔画（黑色）会把方差拉高；按亮度取环带的"纸面色子集"
+    # （百分位自适应，灰纸也适用），只以子集的紧致度判断平坦性。
+    paper_thr = max(120., float(np.percentile(gray[ring_all], 55.)))
+    paper_ring = ring_all & (gray >= paper_thr)
+    coverage = cv2.blur(paper_ring.astype(np.float32), (61, 61))
+    flat = np.zeros(region.shape, bool)
+    paper = np.zeros(img.shape, np.uint8)
+    std_max = None
+    for c in range(3):
+        val = src[..., c]
+        mean = cv2.blur(val * paper_ring, (61, 61)) / np.maximum(coverage, 1e-6)
+        mean2 = cv2.blur(val * val * paper_ring, (61, 61)) / np.maximum(coverage, 1e-6)
+        std = np.sqrt(np.maximum(mean2 - mean * mean, 0))
+        std_max = std if std_max is None else np.maximum(std_max, std)
+        paper[..., c] = np.clip(mean, 0, 255).astype(np.uint8)
+    flat = region & (coverage > 0.2) & (std_max <= 5.0)
+    rest = region & ~flat
+    return flat, rest, paper
+
+
 def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[RepairName]]:
     """Full repair pipeline: alpha un-mix → halo suppression → LaMa over the footprint.
 
@@ -442,6 +473,19 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
     if mask.repair_mode in ("inpaint", "photo_overlay"):
         region = mask.footprint if mask.footprint is not None else mask.binary(thr.mask_alpha_min) > 0
         if region.any():
+            if mask.repair_mode == "inpaint":
+                # 纯"inpaint"路由（提示词/圈选/笔刷选区）先做平坦纸面直填：
+                # 坐落在均匀纸面上的像素用周围环带均值填补，避免 LaMa 灰调污斑；
+                # 压在文字/图案上的像素保持 LaMa 重建。
+                flat, rest, paper = _flat_components_fill(img, region)
+                if flat.any():
+                    out = img.copy()
+                    out[flat] = paper[flat]
+                    if rest.any():
+                        restored = inpaint(img, rest, thr)
+                        out[rest] = restored[rest]
+                        return out, [RepairName.LAMA, RepairName.PAPER_CLEANUP]
+                    return out, [RepairName.PAPER_CLEANUP]
             out = inpaint(img, region, thr)
             if mask.repair_mode == "photo_overlay":
                 from .photo_overlay import refine
