@@ -405,9 +405,10 @@ class ImageViewer(QWidget):
         rect = self.image_rect()
         painter.save()
         # 按圆角矩形路径精确裁剪：矩形边距裁剪会在放大时留下可见的深色边条，
-        # 路径裁剪让图片顶/底/边都能完整 pan 到，四角保持圆角。
+        # 路径裁剪让图片顶/底/边都能完整 pan 到，四角保持圆角；
+        # 路径与背景填充完全对齐（不内缩），避免图片四周露出深色细框。
         clip_path = QPainterPath()
-        clip_path.addRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 15, 15)
+        clip_path.addRoundedRect(QRectF(self.rect()), 16, 16)
         painter.setClipPath(clip_path)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, self.image_scale() < 1)
         painter.drawPixmap(rect, self.after if self.comparing else self.before,
