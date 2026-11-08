@@ -1414,7 +1414,10 @@ class MainWindow(QMainWindow):
                                       "可切换至「拖拽对比」查看处理前后的变化")
         self.canvas.set_images(img, result.output.image if comparing else None,
                                page_key=(self.batch.uid, row), caption=caption)
-        editable_view = mode in ("原始图片", "水印选区")
+        # 处理结果视图同样可涂抹：提示词/自动处理的修复残留（如 LaMa 污斑）
+        # 只存在于结果图里，在结果视图上直接涂最直观；坐标与原图一一对应，
+        # 按当前选区处理时仍从原图按完整选区重修复。
+        editable_view = mode in ("原始图片", "水印选区", "处理结果")
         editing = self._selection_edit is not None
         self.canvas.set_brush_mode(editing and editable_view and not self._assist_busy,
                                    include=self.add_brush_btn.isChecked())
@@ -1427,7 +1430,7 @@ class MainWindow(QMainWindow):
                 "选区已修改，尚未处理；切图丢弃。青色为当前完整选区。" if self._selection_edit.dirty else
                 "编辑完整选区：添加或擦除，最后一笔优先；点击处理才更新图片。")
             self.preview_hint.setText("滚轮缩放 · 空格＋拖动平移 · B 添加 / E 擦除 · 按住 H 隐藏选区 · ⌘/Ctrl＋Z 撤销" if editable_view else
-                                      "正在查看已有处理结果；切回原始图片或水印选区继续描涂，编辑仍保留。")
+                                      "拖拽对比视图不能描涂；切回原始图片、水印选区或处理结果继续，编辑仍保留。")
         elif result is not None and result.mask.selection is not None and mode == "水印选区":
             self.canvas.set_selection_overlay(result.mask.selection, color=(255, 40, 40))
             self.preview_hint.setText("红色为该处理结果使用的完整选区，包含人工添加与擦除的修改。")

@@ -347,6 +347,28 @@ class PromptPanelTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.win.treatment_box.isVisible())
 
+    def test_brush_paints_in_result_view_for_post_repair_touchup(self):
+        # 提示词/自动处理后的修复残留只存在于结果图：处理结果视图必须可涂抹
+        from wm.contract import EngineKind, VerdictReport
+        report = VerdictReport('k', EngineKind.RASTER, [], {}, {}, [], 1)
+        result = PageResult(self.batch.pages[0], PageImage(self.batch.pages[0].image.copy(), 72, 'd'),
+                            MaskLayer(np.zeros(self.batch.pages[0].image.shape[:2], np.float32)), report)
+        self.batch.results[0] = result
+        self.win.render_canvas()  # 刷新辅助按钮可用状态
+        self.win.assist_select_btn.click()
+        self.app.processEvents()
+        self.assertTrue(self.win.canvas.brush_mode)
+        self.win.set_view_mode('处理结果')
+        self.app.processEvents()
+        self.assertTrue(self.win.canvas.brush_mode)
+        self.win.set_view_mode('拖拽对比')
+        self.app.processEvents()
+        self.assertFalse(self.win.canvas.brush_mode)
+        self.win.set_view_mode('原始图片')
+        self.app.processEvents()
+        self.assertTrue(self.win.canvas.brush_mode)
+        self.win.cancel_assisted_selection()
+
     def test_multi_page_doc_labels_carry_page_number(self):
         from wm.contract import PageImage
         # 模拟真实场景：load_many 把 page_index 重编成批次全局序号（8/9/10）
