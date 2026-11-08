@@ -21,7 +21,7 @@ except Exception:  # Windows 无系统时区库且未装 tzdata 时，用固定 
 
 from . import repair, verdict
 from .assisted import image_hash
-from .contract import EngineKind, MaskLayer, MaskSource, PageResult, Thresholds
+from .contract import EngineKind, MaskLayer, MaskSource, PageResult, RepairName, Thresholds
 
 
 def automatic_selection(result):
@@ -139,6 +139,23 @@ def _checked_repair(source, layer, thresholds, allowed):
     return output, methods
 
 
+def _flat_paper_fill(source: np.ndarray, mask: np.ndarray):
+    """人工笔画若位于均匀纸面上：用周围环带的中位色均匀填补，返回颜色数组或 None。
+
+    LaMa 的统计填充在纯白纸面会留下灰调噪点（尤其周围有黑字时）；周围环带
+    方差足够小说明此处就是平坦纸面，直接填中位色更干净、且绝不引入纹理。
+    周围复杂（压在文字/图案上）时返回 None，交由 LaMa 处理。
+    """
+    import cv2
+    ring = cv2.dilate(mask.astype(np.uint8), np.ones((31, 31), np.uint8)).astype(bool) & ~mask
+    if int(ring.sum()) < max(200, int(mask.sum())):
+        return None
+    pixels = source[..., :3][ring].astype(np.float32)
+    if float(pixels.std(axis=0).max()) > 6.0:
+        return None
+    return np.median(pixels, axis=0).astype(np.uint8)
+
+
 def apply_selection(result: PageResult, request: SelectionRequest) -> PageResult:
     source = result.source.image
     selected, overrides, settings = request.selected, request.overrides, request.thresholds
@@ -173,13 +190,20 @@ def apply_selection(result: PageResult, request: SelectionRequest) -> PageResult
         output[retained] = restored[retained]
         methods.extend(used)
     if manual.any():
-        # This binary permission field is never sent to alpha inversion.
-        layer = MaskLayer(np.zeros(selected.shape, np.float32), source=MaskSource.HUMAN,
-                          confidence=1, selection=manual, footprint=manual,
-                          method='explicit_brush', repair_mode='inpaint')
-        restored, used = _checked_repair(source, layer, settings, manual)
-        output[manual] = restored[manual]
-        methods.extend(used)
+        # 平坦纸面上的人工笔画直接用周围中位色均匀填补（LaMa 会留灰调噪点）；
+        # 周围复杂时回退 LaMa。改动仍被限制在笔画选区内。
+        paper = _flat_paper_fill(source, manual)
+        if paper is not None:
+            output[manual] = paper
+            methods.append(RepairName.PAPER_CLEANUP)
+        else:
+            # This binary permission field is never sent to alpha inversion.
+            layer = MaskLayer(np.zeros(selected.shape, np.float32), source=MaskSource.HUMAN,
+                              confidence=1, selection=manual, footprint=manual,
+                              method='explicit_brush', repair_mode='inpaint')
+            restored, used = _checked_repair(source, layer, settings, manual)
+            output[manual] = restored[manual]
+            methods.extend(used)
     elapsed = round((perf_counter()-start)*1000)
     changed = np.any(output != source, axis=2)
     layer = replace(automatic.mask, alpha=np.where(selected, automatic.mask.alpha, 0),

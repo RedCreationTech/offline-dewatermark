@@ -75,8 +75,31 @@ class SelectionRepairTests(unittest.TestCase):
         self.assertFalse(edit.selected[10:101, 97].any())
         self.assertFalse(edit.selected[10:101, 103].any())
 
+    def test_manual_brush_on_flat_paper_fills_with_median_color(self):
+        # 均匀纸面上的人工笔画直接中位色填补，不走 LaMa（避免灰调噪点）
+        image = np.full((120, 160, 3), 230, np.uint8)
+        page = PageImage(image, 100, '纸面填补')
+        empty = MaskLayer(np.zeros(image.shape[:2], np.float32), footprint=np.zeros(image.shape[:2], bool),
+                          repair_mode='inpaint')
+        report = VerdictReport(page.key, EngineKind.RASTER, [], {}, {}, [], 1)
+        result = PageResult(page, replace(page, image=image.copy()), empty, report,
+                            processing={'thresholds': {'mask_alpha_min': .08}})
+        edit = SelectionEdit(result)
+        stroke(edit, (120.5, 90.5), diameter=9)
+        request = edit.request(Thresholds())
+        with patch('wm.selection_edit.repair.repair', side_effect=AssertionError(
+                'flat paper must not call LaMa')):
+            applied = apply_selection(result, request)
+        filled = applied.output.image[90, 120]
+        self.assertEqual([int(v) for v in filled], [230, 230, 230])
+        self.assertIn(RepairName.PAPER_CLEANUP, applied.verdict.repairs)
+
     def test_repair_uses_source_not_last_output_and_never_detects_again(self):
         result = example(); edit = SelectionEdit(result)
+        # 人工笔画 surroundings 置为非均匀，绕过"平坦纸面中位色填补"快路径，
+        # 本用例验证的正是 LaMa 分支两次都以原图为输入。
+        result.source.image[60:110, 55:115] = np.random.RandomState(0).randint(
+            100, 240, (50, 60, 3)).astype(np.uint8)
         stroke(edit, (32.5, 40.5), diameter=5, include=False)
         stroke(edit, (100.5, 80.5), diameter=7)
         request = edit.request(Thresholds(lama_mask_dilate=9))
