@@ -28,6 +28,9 @@ class Batch:
     prompt_query: str = ""
     # 提示词模式的处理方式：strokes＝按笔画（默认）；box＝整框重绘。
     prompt_treatment: str = "strokes"
+    # 交叠处笔画也去除：True（默认）时框内不再受 OCR 正文保护，水印笔画
+    # 全覆盖去除，交叠文字被擦除并由 LaMa 重绘；False 时保留正文优先策略。
+    remove_overlap: bool = True
     # 提示词模型服务方式：resident＝常驻（随方式选择启停）；ondemand＝每轮启动。
     service_mode: str = "resident"
     results: dict[int, PageResult] = field(default_factory=dict)
@@ -109,7 +112,8 @@ class BatchWorker(QThread):
             layer, info = prompt_detect.locate_strokes(
                 page.image, batch.prompt_query, service, thr,
                 close_px=close_px, use_ocr=use_ocr,
-                treatment=batch.prompt_treatment)
+                treatment=batch.prompt_treatment,
+                remove_overlap=batch.remove_overlap)
         except ServiceDied:
             # 常驻服务崩溃：重启一次再试；仍失败则按运行失败上抛。
             service.stop()
@@ -118,7 +122,8 @@ class BatchWorker(QThread):
             layer, info = prompt_detect.locate_strokes(
                 page.image, batch.prompt_query, service, thr,
                 close_px=close_px, use_ocr=use_ocr,
-                treatment=batch.prompt_treatment)
+                treatment=batch.prompt_treatment,
+                remove_overlap=batch.remove_overlap)
         if (info.get("treatment") == "box" and info.get("text_overlap_ratio", 0) > 0.03):
             self.update.emit(dict(
                 kind="stage", batch=batch.uid, index=index,

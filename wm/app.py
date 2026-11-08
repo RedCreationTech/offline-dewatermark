@@ -511,23 +511,29 @@ class MainWindow(QMainWindow):
                                       "但框若压着正文，正文会被一并重绘。")
         find_grid.addWidget(QLabel("处理方式"), 3, 0)
         find_grid.addWidget(self.treatment_box, 3, 1, 1, 2)
+        self.overlap_box = QCheckBox("交叠处笔画也去除（会损伤交叠文字）")
+        self.overlap_box.setChecked(True)
+        self.overlap_box.setToolTip("开启：框内不再受正文保护，水印笔画全覆盖去除，"
+                                    "与水印交叠的正文会被擦除并由 AI 重绘；"
+                                    "关闭：宁可保留水印笔画也不伤正文（正文优先）。")
+        find_grid.addWidget(self.overlap_box, 4, 0, 1, 3)
         self.style_box = QComboBox()
         self.style_box.setEditable(True)
         self.style_box.addItems(list(STYLE_LABELS.values()))
         self.style_box.setToolTip("自动识别会依次检查水印类型；也可选择样式或输入中文描述")
-        find_grid.addWidget(QLabel("水印样式"), 4, 0)
-        find_grid.addWidget(self.style_box, 4, 1, 1, 2)
+        find_grid.addWidget(QLabel("水印样式"), 5, 0)
+        find_grid.addWidget(self.style_box, 5, 1, 1, 2)
         self.ocr_box = QCheckBox("文字识别")
         self.ocr_box.setChecked(True)
-        find_grid.addWidget(self.ocr_box, 5, 0, 1, 3)
+        find_grid.addWidget(self.ocr_box, 6, 0, 1, 3)
         self.recall_box = QCheckBox("补全水印笔画（允许正文交叠）")
         self.recall_box.setChecked(True)
         self.recall_box.setToolTip("通过颜色和重复字形补全笔画；文字框和重复行只用于搜索，不作为修复选区。外扩由上方参数控制。")
-        find_grid.addWidget(self.recall_box, 6, 0, 1, 3)
+        find_grid.addWidget(self.recall_box, 7, 0, 1, 3)
         if self.automatic_selection:
             self.recall_box.hide()
-            find_grid.addWidget(QLabel("自动比较处理方法 · 试用版，结果需复核"), 6, 0, 1, 3)
-        row = 7
+            find_grid.addWidget(QLabel("自动比较处理方法 · 试用版，结果需复核"), 7, 0, 1, 3)
+        row = 8
         for attr in PARAM_GROUPS[0][1]:
             row = add_knob(find_grid, row, attr)
         layout.addWidget(find_box)
@@ -563,6 +569,7 @@ class MainWindow(QMainWindow):
         self.service_box.currentIndexChanged.connect(self._service_mode_changed)
         self.prompt_edit.textChanged.connect(self.save_params)
         self.treatment_box.currentIndexChanged.connect(self.save_params)
+        self.overlap_box.toggled.connect(self.save_params)
         self._update_mode_controls()
         return box
 
@@ -576,8 +583,9 @@ class MainWindow(QMainWindow):
         grid.itemAtPosition(2, 0).widget().setVisible(prompt)
         self.treatment_box.setVisible(prompt)
         grid.itemAtPosition(3, 0).widget().setVisible(prompt)
+        self.overlap_box.setVisible(prompt)
         self.style_box.setVisible(not prompt)
-        grid.itemAtPosition(4, 0).widget().setVisible(not prompt)
+        grid.itemAtPosition(5, 0).widget().setVisible(not prompt)
 
     def _mode_changed(self) -> None:
         self._update_mode_controls()
@@ -671,6 +679,7 @@ class MainWindow(QMainWindow):
         prompt_query = self.current_prompt()
         service_mode = self.current_service_mode()
         prompt_treatment = self.current_treatment()
+        remove_overlap = self.overlap_box.isChecked()
         # 影响检测结果的因素变化都要丢掉可复用的共享掩码；服务方式只影响资源占用，不算。
         if (any(self.batch.params.get(k) != params[k] for k in ("mask_alpha_min", "close_px"))
                 or self.batch.use_ocr != self.ocr_box.isChecked()
@@ -678,7 +687,8 @@ class MainWindow(QMainWindow):
                 or self.batch.style != style
                 or self.batch.detection_mode != detection_mode
                 or self.batch.prompt_query != prompt_query
-                or self.batch.prompt_treatment != prompt_treatment):
+                or self.batch.prompt_treatment != prompt_treatment
+                or self.batch.remove_overlap != remove_overlap):
             self.batch.invalidate()
         self.batch.params = params
         self.batch.use_ocr = self.ocr_box.isChecked()
@@ -688,6 +698,7 @@ class MainWindow(QMainWindow):
         self.batch.prompt_query = prompt_query
         self.batch.service_mode = service_mode
         self.batch.prompt_treatment = prompt_treatment
+        self.batch.remove_overlap = remove_overlap
         self.render_canvas()
 
     def select_batch(self, row: int) -> None:
@@ -709,6 +720,7 @@ class MainWindow(QMainWindow):
         self.prompt_edit.setText(self.batch.prompt_query if self.batch else "")
         self.treatment_box.setCurrentIndex(max(0, self.treatment_box.findData(
             self.batch.prompt_treatment if self.batch else "strokes")))
+        self.overlap_box.setChecked(self.batch.remove_overlap if self.batch else True)
         self._loading_params = False
         self._update_mode_controls()
         self.page_list.clear()
