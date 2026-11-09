@@ -94,6 +94,23 @@ class SelectionRepairTests(unittest.TestCase):
         self.assertEqual([int(v) for v in filled], [230, 230, 230])
         self.assertIn(RepairName.PAPER_CLEANUP, applied.verdict.repairs)
 
+    def test_session_added_and_removed_track_current_round(self):
+        # 本轮新增/回擦只标记本次编辑的改动，与既有选区分开
+        result = example()
+        edit = SelectionEdit(result)
+        initial = edit.overrides.copy()
+        stroke(edit, (120.5, 90.5), diameter=9)           # 本轮新增
+        stroke(edit, (36.5, 34.5), diameter=9, include=False)  # 本轮回擦（原自动选区内）
+        added, removed = edit.session_added, edit.session_removed
+        self.assertTrue(added[90, 120])
+        self.assertFalse(added[50, 50])                    # 既有选区不标新增
+        self.assertGreater(int(added.sum()), 30)           # 直径9圆
+        self.assertTrue(removed[34, 36])
+        self.assertFalse((added & removed).any())
+        edit.undo()  # 撤销擦除
+        self.assertFalse(edit.session_removed.any())
+        self.assertTrue((edit.overrides == initial)[34, 36])
+
     def test_repair_uses_source_not_last_output_and_never_detects_again(self):
         result = example(); edit = SelectionEdit(result)
         # 人工笔画 surroundings 置为非均匀，绕过"平坦纸面中位色填补"快路径，

@@ -80,9 +80,27 @@ class ImageViewer(QWidget):
             rgba = np.zeros((*selected.shape, 4), np.uint8)
             rgba[..., :3] = self._overlay_color
             rgba[..., 3] = np.where(selected, 105, 0)
-            self._overlay = QPixmap.fromImage(QImage(
-                rgba.data, rgba.shape[1], rgba.shape[0], rgba.shape[1]*4,
-                QImage.Format_RGBA8888).copy())
+            self.set_selection_rgba(rgba)
+        self.update()
+
+    def set_selection_rgba(self, rgba: np.ndarray) -> None:
+        """逐像素选区叠加：rgba (H,W,4) uint8，alpha=0 处透明。供编辑态多色显示。"""
+        self._overlay = QPixmap.fromImage(QImage(
+            rgba.data, rgba.shape[1], rgba.shape[0], rgba.shape[1] * 4,
+            QImage.Format_RGBA8888).copy())
+        self.update()
+
+    def update_selection_rgba(self, rgba: np.ndarray, box) -> None:
+        """增量更新叠加层：rgba 为 box 区域的 (h,w,4) patch。"""
+        if self._overlay.isNull():
+            self.set_selection_rgba(rgba)
+            return
+        x0, y0, x1, y1 = box
+        patch = QImage(rgba.data, x1 - x0, y1 - y0, (x1 - x0) * 4, QImage.Format_RGBA8888)
+        painter = QPainter(self._overlay)
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
+        painter.drawImage(QPointF(x0, y0), patch)
+        painter.end()
         self.update()
 
     def update_selection_overlay(self, selected, box):
