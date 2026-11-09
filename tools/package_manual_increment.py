@@ -15,7 +15,8 @@ def main():
     shutil.copyfile(Path(__file__),D/'scripts/package_manual_increment.py')
     blocked=[ROOT/'data/manual_collections/background_batch_001/restricted_originals/business_table_sensitive.png',
              *list((ROOT/'data/manual_collections/douyin_batch_001/originals').glob('*.png'))]
-    forbidden={digest(p) for p in blocked}
+    # 受限原件可能已从磁盘移除（只保留在 increment 的隔离区之外）；只统计仍存在的文件。
+    forbidden={digest(p) for p in blocked if p.is_file()}
     files=sorted(p for p in D.rglob('*') if p.is_file() and '__pycache__' not in p.parts and p.name!='SHA256SUMS.txt')
     inventory={str(p.relative_to(D)):digest(p) for p in files}
     assert not(forbidden&set(inventory.values()))
@@ -32,18 +33,22 @@ def main():
             for name,h in inventory.items():assert digest(extracted/name)==h,name
             output=subprocess.check_output([sys.executable,str(extracted/'scripts/load_manual_increment.py'),
                 '--root',str(extracted),'--view','strict','--limit','1'],text=True)
-            assert json.loads(output.splitlines()[-1])['eligible_records']==121
+            manifest_rows=[json.loads(x) for x in (extracted/'manifest.jsonl').read_text().splitlines() if x.strip()]
+            admitted=[r for r in manifest_rows if r.get('training_admission') is True]
+            expected_pdf=sum(1 for r in admitted if r['kind']=='pdf_page')
+            expected_task=sum(1 for x in (extracted/'training_tasks.jsonl').read_text().splitlines() if x.strip())
+            assert json.loads(output.splitlines()[-1])['eligible_records']==len(admitted)
             pdf_output=subprocess.check_output([sys.executable,str(extracted/'scripts/load_manual_increment.py'),
                 '--root',str(extracted),'--kind','pdf_page','--limit','1'],text=True)
-            assert json.loads(pdf_output.splitlines()[-1])['eligible_records']==6
+            assert json.loads(pdf_output.splitlines()[-1])['eligible_records']==expected_pdf
             task_output=subprocess.check_output([sys.executable,str(extracted/'scripts/load_manual_increment.py'),
                 '--root',str(extracted),'--view','training','--limit','1'],text=True)
-            assert json.loads(task_output.splitlines()[-1])['eligible_records']==129
+            assert json.loads(task_output.splitlines()[-1])['eligible_records']==expected_task
             # Full independent integrity validation from the extracted portable files.
             subprocess.check_output([sys.executable,str(extracted/'scripts/validate_manual_increment.py'),
                 '--root',str(extracted)],text=True)
     result=dict(archive=str(archive.relative_to(ROOT)),bytes=archive.stat().st_size,sha256=digest(archive),
-        members=len(files),crc='passed',all_extracted_hashes='passed',portable_loader='passed_121_records_6_pdf_pages',
+        members=len(files),crc='passed',all_extracted_hashes='passed',portable_loader=f'passed_{len(admitted)}_records_{expected_pdf}_pdf_pages',
         extracted_validation='passed',excluded_sensitive_and_third_party_originals=3,
         intended_use='user-authorized training in this software; not a public redistribution license')
     receipt=OUT/'watermark_training_increment_v1_1_release.json'
