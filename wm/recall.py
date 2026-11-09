@@ -13,6 +13,25 @@ import numpy as np
 from . import ocr, photo_observations
 from .contract import MaskLayer
 
+# Provisional floor (fitted on the fixed regression repeated-text styles;
+# see the 2026-11-02 inc11 diagnosis report). Below it the enhancement is
+# deemed failed for this image and the base mask is kept, marked unresolved.
+_BASE_EXPLAIN_MIN = 0.75
+
+
+def _explains_base(base, located, thr) -> bool:
+    """True when located accounts for most of the base selection.
+
+    Stroke completion must never discard base coverage it cannot explain.
+    A 9px tolerance absorbs antialias/registration drift between the two
+    selections; the ratio is |base inside tolerance(located)| / |base|.
+    """
+    located_sel = located.binary(thr.mask_alpha_min) > 0
+    if not located_sel.any():
+        return False
+    tolerance = cv2.dilate(located_sel.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
+    return float((base & tolerance).sum() / base.sum()) >= _BASE_EXPLAIN_MIN
+
 
 def _lines(image, base):
     observations = photo_observations.observations(image, ocr.read_lines(image) or [])
@@ -109,6 +128,16 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         # This route already carries source-supported strokes and its own fit.
         # Generic stroke completion must not discard the reconstruction or turn
         # its binary permission into an invented alpha/inpainting model.
+        return mask
+    if mask.repair_mode == 'faint_region_uniform_tint':
+        # Region-level fitted inverse already holds the measured (alpha, W);
+        # a generic stroke-completion pass would re-expand below-threshold
+        # glyphs by guesswork and contaminate the untouched surroundings.
+        return mask
+    if mask.repair_mode == 'ocr_seed_stain':
+        # Seed-box measured stain: the per-pixel alpha and its algebraic
+        # inverse are the measured model; generic completion must not
+        # rewrite them or turn the box into an inpainting scope.
         return mask
     # Keep validated numerical alpha and the corresponding inverse. A search
     # pass must never replace a measured background model with a box inpainter.

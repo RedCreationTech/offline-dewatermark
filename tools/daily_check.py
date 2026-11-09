@@ -119,7 +119,7 @@ def main(argv=None):
         write_daily_report(out, plan, result)
         code = control_main(['check', '--baseline', str(baseline), '--out', str(out / '完整候选记录')])
         result.update(check_passed=code == 0, gate_passed=code == 0, release_eligible=code == 0,
-                      full_gate_returncode=code, comparison='完整候选记录_逐张对照/项目防退化控制报告.html',
+                      full_gate_returncode=code, comparison='完整候选记录_逐张对照（明细报告）',
                       inference_pages=plan['page_mode_count'])
         save(out / '分层检查结果.json', result)
         write_daily_report(out, plan, result)
@@ -136,7 +136,7 @@ def main(argv=None):
         execute(candidate)
         comparison = compare(candidate, baseline, out / '逐张对照')
         result.update(check_passed=comparison['check_passed'], inference_pages=plan['page_mode_count'],
-                      comparison='逐张对照/项目防退化控制报告.html',
+                      comparison='逐张对照（明细报告）',
                       failed_pages=comparison['failed_pages'], review_pages=comparison['review_pages'])
     save(out / '分层检查结果.json', result)
     write_daily_report(out, plan, result)

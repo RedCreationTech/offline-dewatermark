@@ -109,7 +109,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     preserve = getattr(args, 'experimental_seed_preservation', False)
     oblique = getattr(args, 'experimental_oblique_detection', False)
     results = pipeline.process_file(args.input,
-                                   thr=Thresholds(watermark_recall_priority=args.recall_priority or experimental or preserve,
+                                   thr=Thresholds(watermark_recall_priority=True,  # 技术能力始终开启
                                                   experimental_colour_refinement=experimental,
                                                   experimental_seed_preservation=preserve,
                                                   experimental_oblique_detection=oblique),
@@ -150,8 +150,6 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--out", default="out")
     p.add_argument("--dpi", type=int, default=200)
     p.add_argument("--force-raster", action="store_true")
-    p.add_argument("--recall-priority", action="store_true",
-                   help="按颜色与重复字形补全水印笔画，允许处理与正文交叠的水印")
     p.add_argument("--experimental-auto-selection", action="store_true",
                    help="试用自动比较原方法与笔画补全；保留候选供复核，尚未完成默认放行")
     p.add_argument("--experimental-colour-refinement", action="store_true",

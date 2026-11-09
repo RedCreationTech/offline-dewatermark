@@ -396,6 +396,17 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
     def wanted(name: str) -> bool:
         return channels is None or name in channels
 
+    if ((channels is not None and 'faint_region' in channels)
+            or thr.experimental_faint_region):
+        # Isolated candidate for sub-threshold uniform stains on paper. Only
+        # the explicit style lock or the opt-in flag reaches it; the default
+        # cascade must not change behaviour.
+        from . import faint_region
+        located = faint_region.estimate(img, thr)
+        if located is not None:
+            located.instances = _instances(located.alpha, thr)
+            return located
+
     if wanted("paper_grid"):
         located = paper_grid.estimate(img)
         if located is not None:
@@ -429,6 +440,13 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
             located = observed_text.repeated_photo(img, observations)
         if located is None and (wanted("document_overlay") or wanted("chromatic")):
             located = observed_text.shadow_paper(img, observations)
+        if located is None and thr.experimental_ocr_line_seed:
+            # OCR-read date/time-like lines on paper pages (date stamps): the
+            # box is search scope only, the mask comes from measured stain
+            # evidence in the box neighbourhood. Default-on since 2026-11-05
+            # (dev + regression + independent v1 validated); self-declining.
+            from . import ocr_seed_stain
+            located = ocr_seed_stain.estimate(img, observations, thr)
         if located is not None:
             located.instances = _instances(located.alpha, thr)
             return located

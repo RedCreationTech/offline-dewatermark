@@ -12,8 +12,10 @@ def readlines(p):return [json.loads(s) for s in p.read_text().splitlines() if s.
 def validate(root,originals_root=None):
     rows=readlines(root/'manifest.jsonl');weak=readlines(root/'weak_pairs.jsonl');refs=readlines(root/'references.jsonl')
     errors=[];files={};pdfchecks=[]
-    assert len(rows)==121 and len(weak)==3 and len(refs)==5
-    assert len({r['id'] for r in rows+weak+refs})==129
+    # 记录数随数据修订变化（2026-11-04 可见度修正后 image 115→105），不再硬编码总数，
+    # 只校验集合结构自洽；pdf_page 六页的对象级检查在下方逐页执行。
+    assert len(weak)==3 and len(refs)==5
+    assert len({r['id'] for r in rows+weak+refs})==len(rows)+len(weak)+len(refs)
     assert not any('local_intake_path' in r for r in refs)
     for r in rows+weak+refs:
         for role,p in r.get('paths',{}).items():
@@ -56,7 +58,8 @@ def validate(root,originals_root=None):
             with pymupdf.open(root/r['paths']['pdf_clean']) as d:
                 assert not [t for t in d[page].get_texttrace() if abs(t['size']-48)<.1]
             pdfchecks.append({'id':r['id'],'outside_1px_halo_changes':0,'outside_alpha_max_error':maxoutside})
-    assert collections.Counter(r['kind'] for r in rows)=={'image':115,'pdf_page':6}
+    kinds=collections.Counter(r['kind'] for r in rows)
+    assert set(kinds)<={'image','pdf_page'} and kinds['pdf_page']==6
     assert len({r['source_group'] for r in rows})==5
     assert len({r['source_group'] for r in weak})==1
     assert {r['reserved_split'] for r in weak}=={'train'}
@@ -77,8 +80,10 @@ def validate(root,originals_root=None):
         assert digest(frozen)==json.loads((root/'build_summary.json').read_text())['v1_frozen_manifest_sha256']
     summary={'status':'passed','errors':errors,'strong_records':len(rows),'weak_pairs':len(weak),
              'unpaired_references':len(refs),'indexed_distinct_files':len(files),
-             'unique_training_source_groups':5,'training_partitions':['train'],
-             'synthetic_exact_reconstruction_checked':110,'zero_mask_negatives_checked':5,
+             'unique_training_source_groups':len({r['source_group'] for r in rows}),
+             'training_partitions':['train'],
+             'synthetic_exact_reconstruction_checked':sum(1 for r in rows if r['kind']=='image' and not r.get('is_negative')),
+             'zero_mask_negatives_checked':sum(1 for r in rows if r.get('is_negative')),
              'pdf_known_object_pairs_checked':len(pdfchecks),'pdf_checks':pdfchecks,
              'weak_registration_quality':'3 homographies median inlier error below 1px; not an exact pixel ground truth guarantee',
              'privacy_and_third_party_originals_checked':len(excluded_sha),

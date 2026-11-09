@@ -15,7 +15,7 @@
 - **物理基础**：叠印模型 `I = s·B + t`（`s=1-α₀`，`t=α₀W`）。能用代数反混合还原的底色优先反解；水印压住文字的"不透明核心"交给本地 LaMa 深度学习补图。
 - **双引擎**：PDF 先看能不能**无损**删掉独立水印对象（引擎A，结构解析）；不行的页再走像素检测+修复（引擎B，光栅分析）。
 - **质量口径**：自研"四条件判定协议"（保真/残膜/识别/时限），逐页出 `manifest.json`；没有干净参考的页一律标"待复核"，不计入成功率。
-- **工程特色**：整套"防退化管控"（冻结代码快照 → 三模式跑固定集 → 逐张对照基线 → 显式放行），日常 `./start.sh test`、发布 `./start.sh test-release`。
+- **工程特色**：整套"防退化管控"（冻结代码快照 → 固定集全量运行 → 逐张对照基线 → 显式放行），日常 `./start.sh test`、发布 `./start.sh test-release`。
 
 新手第一条命令：`./start.sh setup`，然后 `./start.sh gui` 打开桌面程序。
 
@@ -58,7 +58,7 @@ C4Container
     Container(app, "桌面前端", "wm/app.py + wm/viewer.py，PySide6/QThread", "批次管理、四视图（拖拽对比/结果/原图/选区）、参数面板、进度与指标、画笔编辑选区；只经契约类型与算法层对话")
     Container(cli, "CLI 与评测入口", "wm/cli.py + wm/e2e_test.py", "synth(生成带真值合成集) / fixtures(打PDF夹具) / eval(四条件协议评测) / run(处理单文件)")
     Container(core, "算法管线核心", "wm/ 包（44 个 .py 模块）：pipeline/masks/repair/lama/structure/ocr/verdict/documents 等", "引擎A结构解析、引擎B检测与修复、判定、结果落盘；numpy+OpenCV+onnxruntime+pymupdf")
-    Container(tools, "管控与回归工具", "tools/：daily_check、regression_control、control_worker、run_min_regression、verify_* 等", "日常分层检查、冻结基线、三模式对照、报告生成；只复用核心，不改算法")
+    Container(tools, "管控与回归工具", "tools/：daily_check、regression_control、control_worker、run_min_regression、verify_* 等", "日常分层检查、冻结基线、逐张对照、报告生成；只复用核心，不改算法")
     ContainerDb(contract, "共享契约 wm/contract.py", "frozen dataclass + StrEnum", "算法轨与 UI 轨唯一的协调成本：PageImage/MaskLayer/VerdictReport/PageResult/Thresholds/JobEvent")
 
     Rel(operator, app, "交互")
@@ -82,7 +82,7 @@ C4Component
         Component(struct, "structure.py + pdf_text.py + pdf_images.py", "引擎A：PDF 结构解析", "透明/大字号独立文字与图片叠加探测；命中则只省略显示指令，无损")
         Component(masks, "masks.py + 样式通道模块", "引擎B：水印定位", "级联：paper_grid→periodic→corner_id→dark_text→OCR文字观测（含阴影分层）→photo_*→repeated/paper_repeat/document_overlay/chromatic→contrast_text→通用明暗/饱和度/尺度滤波；跨页先验 estimate_crosspage")
         Component(ocr, "ocr.py", "OCR 正文禁区", "RapidOCR 检测框按字号/倾角/置信度筛选膨胀成保护区；可选，缺失走保守阈值")
-        Component(recall, "recall.py", "笔画补全（可选开关）", "仅在颜色/对比/已验证重复字形证据下补淡笔画；OCR 框只作搜索范围；阴影分层结果不交给通用补全替换")
+        Component(recall, "recall.py", "笔画补全（始终开启）", "仅在颜色/对比/已验证重复字形证据下补淡笔画；OCR 框只作搜索范围；阴影分层结果不交给通用补全替换")
         Component(repair, "repair.py + lama.py + shadow_layers.py", "修复分流", "通用路径：alpha 反混合→墨晕保护→LaMa；专用路径按 repair_mode 分流，阴影分层仅在许可选区内写回反解结果")
         Component(verdict, "verdict.py", "四条件判定", "保真/残膜/识别/时限；识别与残留无真值时记未评估；自动选择始终保留待复核")
         Component(pipe, "pipeline.py", "管线调度与落盘", "双引擎路由、批量/流式、可选自动选择、manifest.json、复核页 export_review.py")
@@ -184,7 +184,7 @@ flowchart TB
 
 ### 3.4 笔画补全与跨页先验（默认差异）
 
-- **桌面默认开启**"补全水印笔画（允许正文交叠）"：沿已发现水印找淡笔画，新像素必须有当前图的颜色/对比/透明度证据或经验证的重复字形；字洞与字间空白保留，不填满文字框。CLI 对应 `--recall-priority`。阴影分层已自带当前图笔画观测，不再交给通用补全替换。
+- **笔画补全始终开启**：沿已发现水印找淡笔画，新像素必须有当前图的颜色/对比/透明度证据或经验证的重复字形；字洞与字间空白保留，不填满文字框。桌面与命令行入口一致，无开关。阴影分层已自带当前图笔画观测，不再交给通用补全替换。
 - **跨页先验**：同批同尺寸组 ≥2 页时，中位数统计出"内容无关"的水印覆盖场；仅当与单图检测充分重合且选区不异常变大时才采用（[wm/masks.py](../wm/masks.py) `with_prior`），重复出现的页眉、表格线不会被直接认作水印。
 - **三个默认关闭的实验开关**（`Thresholds` 字段，仅开发对照）：`experimental_colour_refinement`（彩色笔画细化）、`experimental_seed_preservation`（旧笔画保留 V2）、`experimental_oblique_detection`（斜字方向补试）。截至 2026-10-30 均未通过完整放行，**不要写进默认流程**。自动选择是另一个独立的桌面/CLI 试用开关，见 §3.8。
 
@@ -223,7 +223,7 @@ flowchart TB
 
 为保证"修一个样式不砸其他样式"，项目把验证做成了工具链（[tools/regression_control.py](../tools/regression_control.py)、[control_worker.py](../tools/control_worker.py)、[daily_check.py](../tools/daily_check.py) 等 + [config/regression_control.json](../config/regression_control.json)、[regression_tiers.json](../config/regression_tiers.json)）：
 
-- **固定范围**：当前 395 个输入场景 / 423 页，三种模式（桌面默认、桌面关补全、CLI 默认）共 1,269 页次；2026-10-29 按用户要求移除 3 张手写样本（登记在 [regression_retirements.json](../config/regression_retirements.json)）。
+- **固定范围**：当前 395 个输入场景 / 423 页（桌面默认模式）；2026-10-29 按用户要求移除 3 张手写样本（登记在 [regression_retirements.json](../config/regression_retirements.json)）。
 - **冻结快照**：每轮封存代码、输入、模型哈希、依赖、参数；推理工作进程只拿到原图，评分在推理结束后进行（推理与评估隔离，见 AGENTS.md §3）。
 - **分层日常检查**：按源码改动影响选级（说明文档→工程测试→定向样式→跨样式→完整放行），局部通过**不能**更新基线；发布必须 `test-release`。
 - **显式放行**：门槛通过且人工复核后 `./start.sh control promote` 才更新本机基线指针（`.regression-control/baseline.json`），历史封存全保留。
@@ -272,7 +272,7 @@ cd offline-dewatermark
 | 想做什么 | 命令 |
 |---|---|
 | 打开桌面程序（多批次处理） | `./start.sh gui [图片]`（即 `.venv/bin/python -m wm.app`） |
-| 处理单个文件（CLI） | `.venv/bin/python -m wm.cli run 输入图片 --out 新目录`；`--recall-priority` 开笔画补全；`--style 平铺文字` 锁定样式；三个 `Thresholds` 实验开关默认关闭 |
+| 处理单个文件（CLI） | `.venv/bin/python -m wm.cli run 输入图片 --out 新目录`；`--style 平铺文字` 锁定样式；文字识别与笔画补全始终开启；三个 `Thresholds` 实验开关默认关闭 |
 | 试用自动比较处理方法 | 桌面或 CLI 显式加 `--experimental-auto-selection`；默认关闭，结果始终待复核 |
 | 核心 36 输入回归 | `./start.sh eval` |
 | 生成合成评测集（带真值，可自证） | `.venv/bin/python -m wm.cli synth --out out/generated_fixtures/synthetic` → `fixtures` → `eval`（种子固定，逐像素可复现） |
@@ -292,7 +292,7 @@ QT_QPA_PLATFORM=offscreen HF_HUB_OFFLINE=1 .venv/bin/python -m unittest discover
 ./start.sh test --plan
 ./start.sh test
 
-# 2. 发布/更新默认基线前：完整三模式对照（约 1,269 页次，耗时以 --plan 估算为准）
+# 2. 发布/更新默认基线前：完整对照（全部应用输入，耗时以 --plan 估算为准）
 ./start.sh test-release
 
 # 3. 首次建立观察基线（冻结现状，不代表质量合格）

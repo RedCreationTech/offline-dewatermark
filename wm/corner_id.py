@@ -42,11 +42,14 @@ def _inside_table(gray, box, paper):
     radius = max(24, int(height*16))
     x0, y0 = max(0, cx-radius), max(0, cy-radius)
     x1, y1 = min(gray.shape[1], cx+radius), min(gray.shape[0], cy+radius)
+    if x1 <= x0 or y1 <= y0:
+        return False
     ink = (gray[y0:y1, x0:x1] < paper-12).astype(np.uint8)
     length = max(20, int(height*3))
     horizontal = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((1, length), np.uint8))
     vertical = cv2.morphologyEx(ink, cv2.MORPH_OPEN, np.ones((length, 1), np.uint8))
-    x, y = cx-x0, cy-y0
+    x = min(max(cx - x0, 0), x1 - x0 - 1)
+    y = min(max(cy - y0, 0), y1 - y0 - 1)
     # Require all four cell boundaries; a lone footer rule is not a table.
     return (horizontal[:y, x].any() and horizontal[y+1:, x].any()
             and vertical[y, :x].any() and vertical[y, x+1:].any())
@@ -59,48 +62,26 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     white_page = paper >= 180 and (gray > 235).mean() >= .45
     cw, ch = int(w * .45), int(h * .20)
     corners = [(0, 0), (w - cw, 0), (0, h - ch), (w - cw, h - ch)]
-    # The four corner OCR passes are the single biggest per-page OCR cost (they
-    # run on every page). Tile the four 2x-upscaled corners into one image with
-    # a white gutter and run a single OCR pass; map every box back to its
-    # corner. Corners without any ink cannot hold an ID and stay blank tiles.
-    tile_w, tile_h = cw * 2, ch * 2
-    gutter = 48
-    canvas = np.full((tile_h, 4 * tile_w + 3 * gutter, 3), 255, np.uint8)
-    any_ink = False
-    for idx, (x0, y0) in enumerate(corners):
+    regions = []
+    for x0, y0 in corners:
         crop = img[y0:y0 + ch, x0:x0 + cw]
         if crop.size == 0:
             continue
-        if not (gray[y0:y0 + ch, x0:x0 + cw] < paper - 18).any():
-            continue  # no ink in this corner -> no identifier possible here
-        up = cv2.resize(crop, (tile_w, tile_h), interpolation=cv2.INTER_CUBIC)
-        canvas[:, idx * (tile_w + gutter): idx * (tile_w + gutter) + tile_w] = up
-        any_ink = True
-    if not any_ink:
-        return None
-    regions = []
-    for box, text, confidence in ocr.read_lines(canvas) or []:
-        if confidence < .45 or not _id_like(text):
-            continue
-        seg = int(box[:, 0].mean() // (tile_w + gutter))
-        if not 0 <= seg <= 3:
-            continue
-        local = box.copy()
-        local[:, 0] -= seg * (tile_w + gutter)
-        if local[:, 0].min() < -1 or local[:, 0].max() > tile_w + 1:
-            continue  # a box straddling the gutter is not a corner glyph
-        box = local / 2.0
-        x0, y0 = corners[seg]
-        height, length, tilt = ocr._geometry(box)
-        if height > 90 or tilt > 25:
-            continue
-        if _inside_table(gray, box + [x0, y0], paper):
-            continue
-        bx0 = int(max(0, box[:, 0].min() - 3))
-        bx1 = int(min(cw, box[:, 0].max() + 3))
-        by0 = int(max(0, box[:, 1].min() - 3))
-        by1 = int(min(ch, box[:, 1].max() + 3))
-        regions.append((x0 + bx0, y0 + by0, x0 + bx1, y0 + by1))
+        up = cv2.resize(crop, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        for box, text, confidence in ocr.read_lines(up) or []:
+            if confidence < .45 or not _id_like(text):
+                continue
+            box = box / 2.0
+            height, length, tilt = ocr._geometry(box)
+            if height > 90 or tilt > 25:
+                continue
+            if _inside_table(gray, box + [x0, y0], paper):
+                continue
+            bx0 = int(max(0, box[:, 0].min() - 3))
+            bx1 = int(min(cw, box[:, 0].max() + 3))
+            by0 = int(max(0, box[:, 1].min() - 3))
+            by1 = int(min(ch, box[:, 1].max() + 3))
+            regions.append((x0 + bx0, y0 + by0, x0 + bx1, y0 + by1))
     if not regions:
         return None
     alpha = np.zeros(gray.shape, np.float32)

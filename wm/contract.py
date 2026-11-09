@@ -90,6 +90,18 @@ class Thresholds:
     experimental_colour_refinement: bool = False  # opt-in; no independent holdout claim
     experimental_seed_preservation: bool = False  # source-supported old strokes; opt-in candidate
     experimental_oblique_detection: bool = False  # balanced chromatic fallback; opt-in candidate
+    # Region-level uniform-tint inverse for sub-threshold stains on an ample
+    # paper reference. Isolated candidate: off by default, style-gated; the
+    # measured opacity rides overlay_opacity because alpha sits below
+    # mask_alpha_min by design.
+    experimental_faint_region: bool = False
+    # OCR-seeded local stain measurement for sub-threshold small lines (date
+    # stamps) on paper pages. Default ON since 2026-11-05: validated on the
+    # dev set, 47-page regression (byte-identical everywhere it declines) and
+    # independent set v1 (61/61 zero-impact, xdoc_002 recall 0→1.000).
+    # It self-declines unless an OCR-read date/time-like line on a paper page
+    # passes the measured-evidence gates; set False to disable.
+    experimental_ocr_line_seed: bool = True
 
 
 @dataclass
@@ -159,6 +171,10 @@ class MaskLayer:
     # Binary alpha selects strokes here; it is not measured physical opacity.
     shadow_reconstruction: np.ndarray | None = None
     shadow_evidence: dict[str, Any] | None = None
+    # Set when a stroke-completion enhancement was offered for this image but
+    # rejected by per-image validation: it could not explain enough of the
+    # base selection, so the base mask was kept (fallback, marked unresolved).
+    skip_reason: str | None = None
 
     def binary(self, threshold: float = Thresholds.mask_alpha_min) -> np.ndarray:
         if self.selection is not None:

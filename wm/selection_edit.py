@@ -44,9 +44,21 @@ class SelectionEdit:
             self.overrides[current & ~self.automatic] = 1
             self.overrides[~current & self.automatic] = 0
         self.selected = current.copy()
+        self._initial_overrides = self.overrides.copy()  # 会话快照：区分本轮新增/回擦
         self.last_change = (True, 0)  # 最近一笔的 (是否添加, 像素数)，供界面反馈
         self.undo_stack = []
         self.redo_stack = []
+        self._stroke = None
+
+    @property
+    def session_added(self) -> np.ndarray:
+        """本轮编辑新加入选区的像素（会话内由非手动提升为手动添加）。"""
+        return (self.overrides == 1) & (self._initial_overrides != 1)
+
+    @property
+    def session_removed(self) -> np.ndarray:
+        """本轮编辑从选区擦除的像素（会话内被显式排除）。"""
+        return (self.overrides == 0) & (self._initial_overrides != 0)
         self._stroke = None
 
     @property

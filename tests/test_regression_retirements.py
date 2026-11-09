@@ -21,7 +21,7 @@ class RetirementTests(unittest.TestCase):
         saved = copy.deepcopy((run,inventory))
         projected, active = project_baseline(run,inventory,profile,'sealed')
         self.assertEqual((run,inventory),saved)
-        self.assertEqual(len(projected['records']),len(run['records'])-3)
+        self.assertEqual(len(projected['records']),len(run['records'])-1)  # manual/1 单页（单模式口径）
         self.assertEqual(set(projected['expected_keys']),{r['key'] for r in projected['records']})
         self.assertIn('manual/2',{r['id'] for r in active['cases']})
         self.assertIn('fixed/negative',{r['id'] for r in active['cases']})

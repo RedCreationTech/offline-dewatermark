@@ -38,7 +38,7 @@ Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），�
 | 人工增量 | 129 个不重复任务样本 | 121 严格配对＋3 近似配对＋5 检测专用；原121条清单保留兼容 |
 | 固定回归 | 43 个输入／59 张页 | 核心36＋真实扩展7，用来检查退化 |
 
-完整管控覆盖395个输入场景／423张页，三种模式共1,269页次，包含批次重复来源。以上数量不能直接相加为独立图片数，也不代表已完成模型训练。
+完整管控覆盖395个输入场景／423张页（桌面默认模式），包含批次重复来源。以上数量不能直接相加为独立图片数，也不代表已完成模型训练。
 当前应用清单已核对，清单一致不表示效果合格。
 <!-- current-dataset-counts:end -->
 
@@ -49,14 +49,14 @@ Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），�
 ```bash
 ./start.sh test --plan  # 先看实际修改需要检查什么
 ./start.sh test         # 按影响执行日常检查
-./start.sh test-release # 发布或更新默认基线前完整三模式对照
+./start.sh test-release # 发布或更新默认基线前完整对照
 ```
 
 本机已有观察基线时继续沿用；首次在其他机器建立基线使用 `./start.sh freeze-baseline`，它只记录现状，包括缺陷。规则见 [放行门槛](config/regression_control.json) 与 [分层范围](config/regression_tiers.json)。数据、模型和可比较基线缺失时不能宣称验收完成。
 
 有 NVIDIA 显卡的机器可在任意子命令后加 `--gpu`：WeVisOne 分割探针用 `cuda:0`；LaMa 仅当主环境装有可用的 CUDA 版 onnxruntime 时才走 `WM_LAMA_CUDA=1`，否则保持 CPU 并提示。示例：`./start.sh gui --gpu`（或 `start.bat gui --gpu`）；`./start.sh wevisone --gpu [提示词] [图片]` 单独跑 WeVisOne 单图分割探针（默认 cpu），输出到 `out/WeVisOne环境检查_NN`。注意：现网 LaMa 量化模型在 CUDA 12 版 onnxruntime 上缺少量化算子支持、DirectML 亦不支持其 FFC 结构，本机经实测只能在 CPU 运行；未来如升级驱动与 CUDA 13 运行时，该模型在 CUDA 13 版 onnxruntime 上的可用性需重新实测。
 
-`check-data` 只证明清单校验通过；固定集诊断、工程测试及局部实验不能替代完整发布放行或独立验证。桌面默认、关闭笔画补全和 CLI 默认的参数不同，比较时应记录。
+`check-data` 只证明清单校验通过；固定集诊断、工程测试及局部实验不能替代完整发布放行或独立验证。
 
 纸面彩色阴影文字分层反解已在 2026-10-29 接入默认处理；表格残影、正常彩色内容保护和耗时问题仍未解决。部分照片和淡字存在漏检，正文、数字、纹理可能受损；无可靠参考时保持待复核，不将未知质量计为成功。已有实验细节保留在本地报告中，实际行为以长期流程说明和源码为准。
 

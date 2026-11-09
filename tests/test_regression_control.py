@@ -40,6 +40,8 @@ class GuardTests(unittest.TestCase):
 
     def test_one_regression_cannot_be_cancelled_by_other_improvements(self):
         before = run()
+        before['records'].append(page('desktop:other:1'))
+        before['expected_keys'] = [r['key'] for r in before['records']]
         after = copy.deepcopy(before)
         after['records'][0]['recall'] = .88
         after['records'][1]['recall'] = 1.

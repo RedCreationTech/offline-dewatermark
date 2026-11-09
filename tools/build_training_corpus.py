@@ -19,6 +19,7 @@ IMAGE_STYLES={
  'local_text':('C01','局部文字'), 'timestamp':('C01','日期时间戳'), 'website':('C01','网址文字'),
  'signature':('C02','模拟手写签名'), 'logo_transparent':('C02','透明几何 Logo'), 'logo_opaque':('C02','不透明几何 Logo'),
  'center_text':('C03','居中大字'), 'center_white':('C03','白色半透明大字'),
+ 'center_gray':('C03','灰黑半透明大字'),
  'tiled_diagonal':('C04','斜向平铺文字'), 'tiled_irregular':('C04','非等距密集文字'),
  'dot_grid':('C05','点阵'), 'line_net':('C05','细线网格'),
  'tiny_corner':('C06','高清小角标'), 'cropped_edge':('C06','边缘裁切文字'),
@@ -157,9 +158,82 @@ def collect_bases():
     savejson(DEST/'bases/manifest.json',bases)
     return bases
 
-def watermark_layer(size,style,key,split):
+# 常见文字样式：水印颜色按底图适配，保证水印物理可见（见 VISIBLE_FLOOR）。
+#  forced-color 样式（center_white / center_gray / heavy_dark / faint）不在其列，
+# 由样式×底图路由处理；faint 是极淡边界样本，有意保持低可见度。
+ADAPTIVE_STYLES = {'local_text','timestamp','website','signature',
+                   'logo_transparent','logo_opaque',
+                   'tiled_diagonal','tiled_irregular',
+                   'tiny_corner','cropped_edge','center_text'}
+# 水印区中位可见度（相对底图的灰度差级）下限；低于此值视为失真样本。
+VISIBLE_FLOOR = 8.0
+
+def median_visibility(clean_rgb, overlay):
+    """水印区（alpha>8）相对底图的中位灰度差（0-255 级）。"""
+    comp = np.asarray(Image.alpha_composite(clean_rgb.convert('RGBA'), overlay)).astype(int)[:, :, :3]
+    base = np.asarray(clean_rgb).astype(int)
+    a = np.asarray(overlay.getchannel('A'))
+    d = np.abs(comp - base).mean(axis=2)
+    m = a > 8
+    return float(np.median(d[m])) if m.any() else 0.0
+
+def contrast_color_for(base_rgb):
+    """按底图中位亮度选一个保证反差的水印色：暗底用浅灰白，亮/中底用深灰。"""
+    lum = float(np.median(np.asarray(base_rgb.convert('L'))))
+    return (240, 240, 245) if lum < 128 else (45, 45, 50)
+
+def watermark_layer_checked(size, style, key, split, base_rgb):
+    """生成水印层并按可见度兜底（2026-11-04 样本可用性修正）。
+
+    返回 (final_style, overlay, params, report)。report 为 None 表示原样未动。
+    规则：
+    - ADAPTIVE_STYLES 可见度 < VISIBLE_FLOOR 时，用 contrast_color_for 重染一次；
+    - center_white 可见度 < VISIBLE_FLOOR（浅底压白字）时改走 center_gray，
+      这才是文档底上真实存在的半透明大字形态；
+    - 其余样式（含 faint 极淡边界样本）不做自动改动，report 记为 unhandled。
+    """
+    overlay, params = watermark_layer(size, style, key, split)
+    vis = median_visibility(base_rgb, overlay)
+    if vis >= VISIBLE_FLOOR:
+        return style, overlay, params, None
+    if style in ADAPTIVE_STYLES:
+        color = contrast_color_for(base_rgb)
+        overlay2, params2 = watermark_layer(size, style, key, split, force_color=color)
+        vis2 = median_visibility(base_rgb, overlay2)
+        # 重染一次仍不达标时换另一种极性再试一次，取两者更优。
+        if vis2 < VISIBLE_FLOOR:
+            alt = (45, 45, 50) if color[0] > 128 else (240, 240, 245)
+            overlay3, params3 = watermark_layer(size, style, key, split, force_color=alt)
+            vis3 = median_visibility(base_rgb, overlay3)
+            if vis3 > vis2:
+                overlay2, params2, vis2 = overlay3, params3, vis3
+                color = alt
+        params2['color_adapted'] = True
+        params2['visibility_before'] = round(vis, 2)
+        params2['visibility_after'] = round(vis2, 2)
+        report = dict(action='color_adapted', before_color=params.get('color'),
+                      after_color=list(color), visibility_before=round(vis, 2),
+                      visibility_after=round(vis2, 2))
+        return style, overlay2, params2, report
+    if style == 'center_white':
+        overlay2, params2 = watermark_layer(size, 'center_gray', key, split,
+                                            force_color=(60, 60, 65))
+        vis2 = median_visibility(base_rgb, overlay2)
+        params2['routed_from'] = 'center_white'
+        params2['visibility_before'] = round(vis, 2)
+        params2['visibility_after'] = round(vis2, 2)
+        report = dict(action='routed_center_gray', visibility_before=round(vis, 2),
+                      visibility_after=round(vis2, 2))
+        return 'center_gray', overlay2, params2, report
+    report = dict(action='unhandled_low_visibility', visibility_before=round(vis, 2))
+    return style, overlay, params, report
+
+def watermark_layer(size,style,key,split,base=None,force_color=None):
     w,h=size;s=min(w,h);rng=random.Random(seed_for(key));layer=Image.new('RGBA',size)
-    color=(rng.randrange(20,160),rng.randrange(20,160),rng.randrange(20,160))
+    # 保持随机流一致：无论是否强制颜色，都消耗与原版相同的随机数，
+    # 保证未触发适配的样本几何逐字节不变。
+    _default_color=(rng.randrange(20,160),rng.randrange(20,160),rng.randrange(20,160))
+    color = force_color if force_color is not None else _default_color
     opacity=rng.choice([.15,.3,.5,.7]);label={'train':'训练','validation':'验证','test':'测试'}[split]
     token=f'{label}素材 {seed_for(key)%10000:04d}'
     params=dict(style=style,seed=seed_for(key),opacity=opacity,color=list(color),text=token,
@@ -197,8 +271,9 @@ def watermark_layer(size,style,key,split):
     elif style.startswith('logo_'):
         if style=='logo_opaque':params['opacity']=1.;a=255
         logo(w-s*.25,h-s*.25,s*.21,a)
-    elif style in ['center_text','center_white','heavy_dark','faint']:
+    elif style in ['center_text','center_white','center_gray','heavy_dark','faint']:
         if style=='center_white':color=(255,255,255)
+        if style=='center_gray':color=(60,60,65);opacity=rng.choice([.15,.3,.5])
         if style=='heavy_dark':color=(10,12,18);opacity=.85
         if style=='faint':color=(95,100,110);opacity=rng.choice([.01,.025,.05])
         params.update(color=list(color),opacity=opacity)

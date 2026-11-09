@@ -118,8 +118,13 @@ class PromptDetectTests(unittest.TestCase):
         image = np.full((300, 400, 3), 250, np.uint8)
         pil = Image.fromarray(image)
         draw = ImageDraw.Draw(pil)
-        font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 15)
-        big = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 44)
+        # 字体敏感：该用例按 msyh 的字形渲染标定（macOS 上其他中文字体 rasterization 不同，
+        # 会引入个位数像素越界），非 Windows 环境跳过，保持断言的严格性。
+        try:
+            font = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 15)
+            big = ImageFont.truetype("C:/Windows/Fonts/msyh.ttc", 44)
+        except OSError:
+            self.skipTest('该用例需在 Windows（msyh 字体）运行')
         for i in range(8):
             draw.text((30, 40 + i * 30), f'背景行 sample {100+i} value {10.5+i:.2f}', fill=(25, 25, 25), font=font)
         wm_layer = Image.new("RGBA", pil.size, (0, 0, 0, 0))
@@ -367,6 +372,36 @@ class PromptPanelTests(unittest.TestCase):
         self.win.set_view_mode('原始图片')
         self.app.processEvents()
         self.assertTrue(self.win.canvas.brush_mode)
+        self.win.cancel_assisted_selection()
+
+    def test_edit_overlay_distinguishes_session_added_in_red(self):
+        # 三色选区：既有浅蓝、本轮新增浅红、本轮回擦浅灰
+        from wm.contract import EngineKind, VerdictReport
+        img = np.zeros((60, 80, 3), np.uint8)
+        sel = np.zeros((60, 80), bool)
+        sel[10:20, 10:20] = True   # 既有选区
+        report = VerdictReport('k', EngineKind.RASTER, [], {}, {}, [], 1)
+        layer = MaskLayer(sel.astype(np.float32), footprint=sel, repair_mode='inpaint',
+                          selection=sel.copy())
+        result = PageResult(PageImage(img, 72, 'd'), PageImage(img.copy(), 72, 'd'),
+                            layer, report)
+        self.batch.pages[0] = result.source
+        self.batch.results[0] = result
+        self.win.render_canvas()
+        self.win.assist_select_btn.click()
+        self.app.processEvents()
+        # 直接驱动一笔：在 (40,40) 添加直径 9
+        self.win._paint_brush_segment(((40.5, 40.5), (40.5, 40.5), 9, True))
+        self.app.processEvents()
+        image = self.win.canvas._overlay.toImage()
+        r, g, b = (image.pixelColor(40, 40).red(), image.pixelColor(40, 40).green(),
+                   image.pixelColor(40, 40).blue())
+        self.assertGreater(r, 200)
+        self.assertLess(g, 160)          # 本轮新增 = 浅红
+        r2, g2, b2 = (image.pixelColor(15, 15).red(), image.pixelColor(15, 15).green(),
+                      image.pixelColor(15, 15).blue())
+        self.assertLess(r2, 80)
+        self.assertGreater(b2, 200)      # 既有选区 = 浅蓝
         self.win.cancel_assisted_selection()
 
     def test_multi_page_doc_labels_carry_page_number(self):

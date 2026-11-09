@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 import re
 import shutil
+
+mode_label_legacy = {'desktop': '桌面默认', 'desktop_protected': '桌面关闭补全', 'cli': 'CLI 默认'}
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 try:
@@ -117,15 +119,26 @@ def available_local_links(body, base=None):
     return re.sub(r'<a\b([^>]*)>(.*?)</a>', replace, body, flags=re.S)
 
 
+# 显式分类覆盖：新卡片和存量卡片统一生效（存量卡片优先按此迁移）。
+CATEGORY_OVERRIDES = {
+    '常见水印基线明细报告': 'control',
+    '常见水印': 'baseline',
+}
+
+
 def category(value):
+    for kw, cat in CATEGORY_OVERRIDES.items():
+        if kw in value:
+            return cat
     if '完整基线效果总览' in value or '效果分档总览' in value:
         return 'baseline'
-    if any(k in value for k in ('tender-', '方案材料｜', '答辩材料｜', 'proposal/output')):
+    if any(k in value for k in ('tender-', '方案材料｜', '答辩材料｜', 'proposal/output',
+                                '项目现状与开发方向整理')):
         return 'material'
     if any(k in value for k in ('项目防退化控制', '分层防退化检查', '项目整理', '样本移除记录', 'project-control', '空间清理审计', '验收报告')):
         return 'control'
     if any(k in value for k in ('失败案例', 'bottleneck', 'failure-cases', '瓶颈判断', '漏检原因分析',
-                                'batch_diagnosis', 'report_before.html', 'export_selection_diagnosis', '分步体检')):
+                                '漏检诊断', 'batch_diagnosis', 'report_before.html', 'export_selection_diagnosis', '分步体检')):
         return 'diagnosis'
     if any(k in value for k in ('历史错误', '旧版错误', 'recall_priority', '历史示意版', '早期分析',
                                 'center_refinement', 'new_samples', 'app_quick20', 'small_dataset_rerun',
@@ -138,6 +151,28 @@ def card(identifier, group, body):
     return dict(id=identifier, category=group, body=body)
 
 
+def superseded_suffix(path: Path) -> str:
+    """同一封存目录里若存在更新版的明细报告，返回旧版标注文案，否则空串。"""
+    m_ver = re.match(r'(项目防退化控制(?:摘要|明细)报告)_(\d{8}_\d{4})\.html$', path.name)
+    if not m_ver:
+        return ''
+    if any(p.name.startswith(m_ver.group(1) + '_') and p.name > path.name for p in path.parent.glob('*.html')):
+        return '（旧版，已被更新版修订取代）'
+    return ''
+
+
+def mark_superseded_in_body(body: str) -> str:
+    """存量卡片（从旧总目录继承的条目）里指向已被取代报告的链接，同步补旧版标注。"""
+    def fix(match):
+        href, text = match.group(1), match.group(2)
+        if '已被更新版修订取代' in text:
+            return match.group(0)
+        target = (OUT / unquote(urlsplit(href).path)).resolve()
+        suffix = superseded_suffix(target)
+        return f'<a href="{href}">{text}{suffix}</a>' if suffix else match.group(0)
+    return re.sub(r'<a href="([^"]+)">([^<]*项目防退化控制(?:摘要|明细)报告[^<]*)</a>', fix, body)
+
+
 def original_cards(source):
     # Subsequent rebuilds retain curated explanations and any newly added entries.
     matches = re.findall(r'<article\b([^>]*data-report-entry[^>]*)>(.*?)</article>', source, re.S)
@@ -147,6 +182,14 @@ def original_cards(source):
             ident = re.search(r'\bid="([^"]+)"', attrs).group(1)
             group = re.search(r'\bdata-category="([^"]+)"', attrs).group(1)
             body = re.sub(r'^\s*<span class="tag">.*?</span>', '', body, count=1, flags=re.S)
+            # 兜底修正：存量卡片若仍停在默认“算法实验”分类，且分类规则
+            # 现在能给出更具体的类别（如新增关键词），则迁移过去；
+            # 显式覆盖（CATEGORY_OVERRIDES）对存量卡片同样生效；
+            # 其余已有明确分类的存量卡片不动，保证人工整理结果稳定。
+            rerun = category(unquote(body) + ident)
+            if group == 'experiment' or rerun != group and any(k in (unquote(body) + ident) for k in CATEGORY_OVERRIDES):
+                if rerun != 'experiment':
+                    group = rerun
             result.append(card(ident, group, body))
         # Other report writers may still append ordinary flat sections.
         result.extend(original_cards_legacy(re.sub(r'<section\b[^>]*data-catalog-panel.*?</section>', '', source, flags=re.S)))
@@ -181,19 +224,37 @@ def baseline_card():
     state = '已完成记录并封存' if complete else '记录尚未完整，不可验收'
     version = directory.name.rsplit('_', 1)[-1]
     overview = OUT / '完整基线效果总览_20261029_V1/去水印效果分档总览_20261029.html'
-    entry = overview if overview.exists() else directory / '项目防退化控制报告.html'
-    entry_label = '按效果分档查看' if overview.exists() else '三种模式逐张结果'
-    body = f'<h2><a href="{href(entry)}">完整观察基线 {escape(version)}｜{entry_label}</a></h2><p class="state">{state} · {date} · 北京时间</p>'
+    detail_reports = sorted(directory.glob('项目防退化控制明细报告_*.html'))
     if overview.exists():
-        body += '<p>新增三档效果总览：效果较好、一般／待复核、问题较多。可切换三种处理模式并查看实际原图与输出；分档仅为自动初筛。</p>'
+        entry, entry_label = overview, '按效果分档查看'
+    elif detail_reports:
+        entry, entry_label = detail_reports[-1], '明细报告（逐张核查）'
+    else:
+        entry, entry_label = directory / '项目防退化控制报告.html', '逐张结果（旧版）'
+    manifest = json.loads((directory / '原始清单.json').read_text())
+    body = f'<h2><a href="{href(entry)}">完整观察基线 {date}｜{entry_label}</a></h2><p class="state">{state} · {date} · 北京时间</p>'
+    if overview.exists():
+        body += '<p>新增三档效果总览：效果较好、一般／待复核、问题较多。可查看实际原图与输出；分档仅为自动初筛。</p>'
         removal = ROOT / 'config/regression_retirements.json'
         if removal.exists():
-            body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／三模式1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
-    body += (f'<p>398个输入场景、426张／页，三种模式共 <strong>{len(rows):,}／{len(run["expected_keys"]):,} 页次</strong>。'
-             f'运行或评分异常 {failures}；桌面默认 {modes["desktop"]}、关闭补全 {modes["desktop_protected"]}、CLI默认 {modes["cli"]} 页次。</p>'
+            body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
+    if len(modes) > 1:
+        mode_bits = '、'.join(f'{mode_label_legacy.get(m, m)} {n}' for m, n in sorted(modes.items())) + ' 页次'
+    else:
+        mode_bits = f'共 {len(rows):,} 页次'
+    body += (f'<p>{manifest["total_inputs"]}个输入场景、{manifest["total_pages"]}张／页，'
+             f'共 <strong>{len(rows):,}／{len(run["expected_keys"]):,} 页次</strong>。'
+             f'运行或评分异常 {failures}；{mode_bits}。</p>'
              '<p><strong>观察基线记录当时表现，包括既有缺陷；不是当前工作版本全量通过、全部图片效果合格或独立泛化验证。</strong></p>')
-    links = [('逐图报告', '项目防退化控制报告.html'), ('运行记录与指标', '运行记录.json'),
-             ('完整样本清单', '原始清单.json'), ('冻结验收规则', '验收规则.json'), ('封存校验', '封存校验.json')]
+    links = []
+    detail_reports = sorted(directory.glob('项目防退化控制明细报告_*.html'))
+    if detail_reports:
+        links.append(('明细报告（tab／搜索）', detail_reports[-1].name))
+    legacy = directory / '项目防退化控制报告.html'
+    if legacy.exists():
+        links.append(('逐图报告（旧版）', '项目防退化控制报告.html'))
+    links += [('运行记录与指标', '运行记录.json'),
+              ('完整样本清单', '原始清单.json'), ('冻结验收规则', '验收规则.json'), ('封存校验', '封存校验.json')]
     body += '<p class="links">' + ' · '.join(f'<a href="{href(directory / filename)}">{label}</a>' for label, filename in links) + '</p>'
     return card('complete-observation-baseline-20261028-v3', 'baseline', body), directory
 
@@ -210,6 +271,11 @@ def discover(cards, baseline):
     for path in sorted(OUT.rglob('*.html')):
         if path.resolve() in linked or path == INDEX:
             continue
+        # 防退化控制封存：未完整跑完的轮次不进总目录（避免半截报告冒充成绩）。
+        if '项目防退化控制' in str(path):
+            run_record = path.parent / '运行记录.json'
+            if not run_record.exists() or not json.loads(run_record.read_text()).get('complete'):
+                continue
         name = path.name
         if any(k in path.as_posix() for k in ('/代码快照/', '/基线代码/', '/暂存代码快照/', '/可维护源文件/', '/原生编辑工作区/', '/样本移除留档/', '/整理前备份/', '/更新前备份/')):
             continue
@@ -225,6 +291,16 @@ def discover(cards, baseline):
         raw = path.read_text(encoding='utf-8', errors='replace')
         parser.feed(raw)
         title = ''.join(parser.title).strip()
+        # 防退化控制报告的标题补日期时间（封存件不改，只在目录显示名上补）。
+        if name == '项目防退化控制报告.html':
+            stamp = re.search(r'(\d{8}_\d{6})', path.parent.name)
+            if stamp:
+                moment = datetime.strptime(stamp.group(1), '%Y%m%d_%H%M%S')
+                title = f'项目防退化控制报告 {moment:%Y-%m-%d %H:%M}'
+        # 同一封存目录里被更新版取代的明细报告标注旧版，避免误点旧口径。
+        sup = superseded_suffix(path)
+        if sup:
+            title += sup
         if not title or title == '水印验证报告总目录':
             continue
         relative = path.relative_to(OUT).as_posix()
@@ -349,12 +425,34 @@ def main():
     else:
         source = ''  # 首次在本机生成总目录，从空分类起步
     curated = original_cards(source)
+    curated = [dict(item, body=mark_superseded_in_body(item['body'])) for item in curated]
+    # 丢弃指向未完整跑完的防退化控制封存的旧条目（半截轮次不是成绩）。
+    def links_incomplete_freeze(body: str) -> bool:
+        for link in re.findall(r'href="([^"]+)"', body):
+            decoded = unquote(link)
+            if '项目防退化控制' not in decoded:
+                continue
+            target = (OUT / urlsplit(decoded).path).resolve()
+            record = target.parent / '运行记录.json'
+            if record.exists() and not json.loads(record.read_text()).get('complete'):
+                return True
+        return False
+    curated = [item for item in curated if not links_incomplete_freeze(item['body'])]
+    # 丢弃主链接目标已不存在的旧条目（如按修订删除的旧版报告），避免总目录残留失效入口。
+    def primary_link_missing(body: str) -> bool:
+        links = re.findall(r'href="([^"]+)"', body)
+        if not links:
+            return False
+        target = (OUT / urlsplit(unquote(links[0])).path).resolve()
+        return not target.is_file()
+    curated = [item for item in curated if not primary_link_missing(item['body'])]
     baseline, directory = baseline_card()
     sealed_report_hash = None
     report = None
     if directory is not None:
         report = directory / '项目防退化控制报告.html'
-        sealed_report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
+        if report.exists():
+            sealed_report_hash = hashlib.sha256(report.read_bytes()).hexdigest()
     # Current full observation supersedes the old wording, not the old files.
     for item in curated:
         if '当前默认基线｜两批14张' in item['body']:
@@ -381,6 +479,32 @@ def main():
     cards = list(unique.values())
     for item in cards:
         item['body'] = available_local_links(clean_document_links(item['body']))
+
+    # 全部入口按时间倒序：最新在前。日期取条目正文中的第一个日期（标题/状态行），
+    # 无日期时退回链接目标的文件修改时间，都没有的排最后。
+    def card_moment(item):
+        import datetime as dt
+        from urllib.parse import unquote
+        # 只从可见文字取日期，避免 href 里目录名（运行开始时间）干扰标题时间。
+        text = re.sub(r'<[^>]+>', ' ', item['body'])
+        match = re.search(r'(20\d{2})[-_年.]?(\d{1,2})[-_月.]?(\d{1,2})', text)
+        if match:
+            try:
+                # 时间与日期可分离（如"2026-11-04 测试 18:31–19:11"），
+                # 时间单独在全文找第一个 hh:mm。
+                tmatch = re.search(r'(\d{1,2})[:：](\d{2})', text)
+                hh = int(tmatch.group(1)) if tmatch else 0
+                mm = int(tmatch.group(2)) if tmatch else 0
+                return dt.datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)), hh, mm)
+            except ValueError:
+                pass
+        link = re.search(r'href="([^"]+)"', text)
+        if link:
+            target = (OUT / unquote(link.group(1))).resolve()
+            if target.is_file():
+                return dt.datetime.fromtimestamp(target.stat().st_mtime)
+        return dt.datetime.min
+    cards.sort(key=card_moment, reverse=True)
     counts = Counter(item['category'] for item in cards)
     baseline_summary = '<span>历史完整观察基线：1,278 页次已记录</span>' if baseline else '<span>本机尚未建立观察基线</span>'
     initial = 'baseline' if baseline else 'all'

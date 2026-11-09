@@ -1,6 +1,6 @@
 {
-  "version": "分层检查V1_20261029",
-  "purpose": "日常按影响范围检查；局部检查不得用于更新默认基线。原有数值退化门槛不变。",
+  "version": "分层检查V2_20261103",
+  "purpose": "日常按影响范围检查；局部检查不得用于更新默认基线。原有数值退化门槛不变。2026-11-03 起回归只保留桌面默认一种模式；原跨模式探针并入桌面默认的固定保护样本。",
   "levels": ["static", "unit", "targeted", "cross", "full"],
   "cross_files": ["wm/app.py", "wm/batches.py", "wm/cli.py", "wm/contract.py", "wm/documents.py", "wm/lama.py", "wm/masks.py", "wm/recall.py", "wm/ocr.py", "wm/pipeline.py", "wm/repair.py", "wm/structure.py", "wm/styles.py", "wm/verdict.py", "wm/contrast_text.py"],
   "unit_files": ["wm/viewer.py", "wm/export_review.py", "wm/assisted.py", "wm/assist_worker.py", "wm/synth.py", "wm/fixtures.py", "wm/e2e_test.py"],
@@ -23,8 +23,7 @@
     "wm/pdf_images.py": ["independent_image", "nested_form", "mixed_storage"]
   },
   "protection_seeds": ["固定回归/core_007", "固定回归/core_011", "固定回归/core_015", "固定回归/core_023", "固定回归/core_024", "固定回归/core_025", "固定回归/core_028", "固定回归/core_036"],
-  "targeted_mode_probes": ["固定回归/core_023", "固定回归/core_025"],
-  "cross_mode_probes": ["固定回归/core_023", "固定回归/core_025", "02_人工增量110张/19_非等距密集文字/inc11_cat_lowlight__tiled_irregular.png"],
+  "cross_extra_seeds": ["固定回归/core_023", "固定回归/core_025", "01_快速20张/04_非等距密集文字/inc11_cat_lowlight__tiled_irregular.png"],
   "batch_context": "选择某张图片时，必须连同原基线批次全部成员一起运行；不得缩小同尺寸先验组后直接比较。",
   "protection_note": "保护样本是固定能力哨兵，不等于已经人工确认效果满意；新增满意图和失败图可通过 --cases 增补，不能移除固定保护样本。",
   "release_note": "大范围算法调整、模型或默认参数变更、准备更新默认版本，必须另跑完整检查；局部通过不能 promote。"

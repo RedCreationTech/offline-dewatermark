@@ -1,0 +1,76 @@
+{
+  "created_at": "2026-11-09T13:43:44.525126+08:00",
+  "files": {
+    "models/inpainting_lama_2025jan.onnx": {
+      "sha256": "7df918ac3921d3daf0aae1d219776cf0dc4e4935f035af81841b40adcf74fdf2",
+      "bytes": 92591623
+    },
+    "models/ocr/ch_ppocr_v2_cls/config.yaml": {
+      "sha256": "b449cbcc237be25d52178a5f067729c043c4f88695780aab7eb3f1b30c9af5b3",
+      "bytes": 419
+    },
+    "models/ocr/ch_ppocr_v3_det/config.yaml": {
+      "sha256": "529a738d18b755715f75b7a0fe38d8247f69395886eb4a01359f44be6f3eb8fd",
+      "bytes": 654
+    },
+    "models/ocr/ch_ppocr_v3_rec/config.yaml": {
+      "sha256": "e90ed3385f42a5d33c20e40f819f2775d666eb6263cd33a4df001cd0ea1c6f7d",
+      "bytes": 368
+    },
+    "models/ocr/config.yaml": {
+      "sha256": "a61ac7c6f753b9840ae77306f31a4845788c530d8ebe950f0c5476e30b984917",
+      "bytes": 907
+    },
+    "models/ocr/models/ch_PP-OCRv3_det_infer.onnx": {
+      "sha256": "3439588c030faea393a54515f51e983d8e155b19a2e8aba7891934c1cf0de526",
+      "bytes": 2432880
+    },
+    "models/ocr/models/ch_PP-OCRv3_rec_infer.onnx": {
+      "sha256": "897a3ededb38fee0dae2c1ccee38241f37df202c9509e3abca02e9217c5ee615",
+      "bytes": 10690752
+    },
+    "models/ocr/models/ch_ppocr_mobile_v2.0_cls_infer.onnx": {
+      "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
+      "bytes": 585532
+    },
+    "models/research/SLBR_README.md": {
+      "sha256": "e14ddd373e5dfd565b0b6cd762163a5821c4ed24b85cbe367df9d620ae9985aa",
+      "bytes": 4503
+    },
+    "models/research/inference_only/slbr_blocks.py": {
+      "sha256": "3f254d847c6f67512798faf2a5bc78bd347e8f38bc7055b9db95633c54930ab8",
+      "bytes": 15056
+    },
+    "models/research/inference_only/slbr_resunet.py": {
+      "sha256": "ac9dd743b7f2bf0908b63299bd05c3e6ba7d82604a7ce5cb59be58a92c7e56cb",
+      "bytes": 13790
+    },
+    "models/research/previous_validation/metrics.json": {
+      "sha256": "96a1319407f0c0672704ed2eb3d79a9895a168c593294658980247eaf8b8f0b8",
+      "bytes": 25751
+    },
+    "models/research/previous_validation/provenance.json": {
+      "sha256": "92744652b11f2617a236cfc8b41551c249b0a5559552d0f4ff447ec892d2bca4",
+      "bytes": 369
+    },
+    "models/research/slbr_256_devicefree.pt": {
+      "sha256": "3436862ba63e4678f52e63b453b2adde15d22542f433942fc71b74f6d3cc5948",
+      "bytes": 86510465
+    },
+    "MODEL_PACKAGE_README.txt": {
+      "sha256": "13d12413161acb892892269454585fd86e875c791690527d6b4659ecffef1cb4",
+      "bytes": 1594
+    },
+    "models/package_manifest.json": {
+      "sha256": "2fefc1fb61ec16dd492d6bf4d42acebca290fb6e81c9662eef6161601d5b18b5",
+      "bytes": 2645
+    },
+    "models/check_models.py": {
+      "sha256": "43d84564eca56de5cfbb5f3db59b61cf18b21fc136eb55024f0358fd56452b47",
+      "bytes": 1652
+    }
+  },
+  "member_count": 17,
+  "source_tree": "/Users/kevinli/Desktop/挑战赛需求/offline-dewatermark-ai",
+  "purpose": "project continuation; data and model resources only"
+}

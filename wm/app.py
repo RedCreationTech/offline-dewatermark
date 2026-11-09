@@ -43,6 +43,28 @@ OPEN_FILTER = "可处理文档 (*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff);;�
 
 DEFAULTS = Thresholds()
 
+# 编辑态选区叠加三色：既有浅蓝、本轮新增浅红、本轮回擦浅灰
+COLOR_EXISTING = (0, 190, 255)
+COLOR_SESSION_ADDED = (255, 110, 140)
+COLOR_SESSION_REMOVED = (160, 160, 160)
+
+
+def _edit_overlay_rgba(edit) -> np.ndarray:
+    """把 SelectionEdit 的三类像素渲染成逐像素 RGBA 叠加层。"""
+    rgba = np.zeros((*edit.selected.shape, 4), np.uint8)
+    added = edit.session_added
+    removed = edit.session_removed
+    base = edit.selected & ~added
+    rgba[base] = (*COLOR_EXISTING, 105)
+    rgba[added] = (*COLOR_SESSION_ADDED, 135)
+    rgba[removed] = (*COLOR_SESSION_REMOVED, 90)
+    return rgba
+
+
+def _edit_overlay_patch(edit, box) -> np.ndarray:
+    x0, y0, x1, y1 = box
+    return _edit_overlay_rgba(edit)[y0:y1, x0:x1].copy()
+
 
 class _ServiceWarmThread(QThread):
     """后台预热 WeVisOne 服务，避免 GUI 线程等待模型加载。"""
@@ -440,8 +462,6 @@ class MainWindow(QMainWindow):
         self._batch_time_timer.timeout.connect(self.refresh_batch_timing)
         for slider in self._sliders.values():
             slider.valueChanged.connect(self.save_params)
-        self.ocr_box.toggled.connect(self.save_params)
-        self.recall_box.toggled.connect(self.save_params)
         self.style_box.currentTextChanged.connect(self.save_params)
         self.set_busy(False)
 
@@ -468,8 +488,13 @@ class MainWindow(QMainWindow):
             s.setToolTip(KNOB_HINTS.get(attr, ""))
             caption.setToolTip(KNOB_HINTS.get(attr, ""))
 
-            def sync(v: int, _lab=value, _unit=unit) -> None:
-                _lab.setText(f"{v} {_unit}")
+            def sync(v: int, _lab=value, _unit=unit, _attr=attr) -> None:
+                if v == _knob_default(_attr):
+                    _lab.setText(f"自动（{v} {_unit}）")
+                    _lab.setStyleSheet("color:#617267;")
+                else:
+                    _lab.setText(f"{v} {_unit} · 已覆盖")
+                    _lab.setStyleSheet("color:#a05a1a;font-weight:bold;")
 
             s.valueChanged.connect(sync)
             sync(s.value())
@@ -478,6 +503,17 @@ class MainWindow(QMainWindow):
             grid.addWidget(s, row * 2 + 1, 0, 1, 3)
             self._sliders[attr] = s
             return row + 1
+
+        # 文字识别与补全笔画始终开启（能力开关已按项目决策移除，见 test_recall_priority 断言）。
+        always_on = QLabel("文字识别与补全水印笔画：始终开启（自动使用全部技术）")
+        always_on.setStyleSheet("color:#617267;font-size:12px;")
+        always_on.setWordWrap(True)
+        layout.addWidget(always_on)
+        if self.automatic_selection:
+            trial = QLabel("自动比较处理方法 · 试用版，结果需复核")
+            trial.setStyleSheet("color:#8a5a1a;font-size:12px;")
+            trial.setWordWrap(True)
+            layout.addWidget(trial)
 
         # 找水印：方式选择（即功能开关）＋方式专属控件＋共有检测参数
         find_box = QGroupBox("找水印")
@@ -517,17 +553,7 @@ class MainWindow(QMainWindow):
         self.style_box.setToolTip("自动识别会依次检查水印类型；也可选择样式或输入中文描述")
         find_grid.addWidget(QLabel("水印样式"), 4, 0)
         find_grid.addWidget(self.style_box, 4, 1, 1, 2)
-        self.ocr_box = QCheckBox("文字识别")
-        self.ocr_box.setChecked(True)
-        find_grid.addWidget(self.ocr_box, 5, 0, 1, 3)
-        self.recall_box = QCheckBox("补全水印笔画（允许正文交叠）")
-        self.recall_box.setChecked(True)
-        self.recall_box.setToolTip("通过颜色和重复字形补全笔画；文字框和重复行只用于搜索，不作为修复选区。外扩由上方参数控制。")
-        find_grid.addWidget(self.recall_box, 6, 0, 1, 3)
-        if self.automatic_selection:
-            self.recall_box.hide()
-            find_grid.addWidget(QLabel("自动比较处理方法 · 试用版，结果需复核"), 6, 0, 1, 3)
-        row = 7
+        row = 5
         for attr in PARAM_GROUPS[0][1]:
             row = add_knob(find_grid, row, attr)
         layout.addWidget(find_box)
@@ -551,6 +577,10 @@ class MainWindow(QMainWindow):
         reset.clicked.connect(self.reset_params)
         buttons.addWidget(self.reprocess_btn, 0, 0, 1, 2)
         buttons.addWidget(reset, 0, 2)
+        self.actual_params = QLabel("本图实际处理参数：—（处理完成后显示）")
+        self.actual_params.setStyleSheet("color:#3a5a48;font-size:12px;background:#eef3ee;border-radius:6px;padding:6px;")
+        self.actual_params.setWordWrap(True)
+        buttons.addWidget(self.actual_params, 2, 0, 1, 3)
         self.auto_redetect_btn = QPushButton("重新自动识别当前图片")
         self.auto_redetect_btn.setToolTip("重新检测将替换该页人工选区和结果；需要保留时请先导出。")
         self.auto_redetect_btn.clicked.connect(lambda: self.start_run(
@@ -631,7 +661,7 @@ class MainWindow(QMainWindow):
             lama_context_margin=vals["lama_context_margin"],
             lama_tile_overlap=vals["lama_tile_overlap"],
             lama_mask_dilate=vals["lama_mask_dilate"],
-            watermark_recall_priority=self.recall_box.isChecked(),
+            watermark_recall_priority=True,  # 技术能力始终开启，不再提供开关
         )
 
     def current_close_px(self) -> int:
@@ -656,8 +686,6 @@ class MainWindow(QMainWindow):
     def reset_params(self) -> None:
         for attr, s in self._sliders.items():
             s.setValue(_knob_default(attr))
-        self.ocr_box.setChecked(True)
-        self.recall_box.setChecked(True)
         self.style_box.setCurrentText("自动识别")
 
     def save_params(self, *_args) -> None:
@@ -673,16 +701,12 @@ class MainWindow(QMainWindow):
         prompt_treatment = self.current_treatment()
         # 影响检测结果的因素变化都要丢掉可复用的共享掩码；服务方式只影响资源占用，不算。
         if (any(self.batch.params.get(k) != params[k] for k in ("mask_alpha_min", "close_px"))
-                or self.batch.use_ocr != self.ocr_box.isChecked()
-                or self.batch.recall_priority != self.recall_box.isChecked()
                 or self.batch.style != style
                 or self.batch.detection_mode != detection_mode
                 or self.batch.prompt_query != prompt_query
                 or self.batch.prompt_treatment != prompt_treatment):
             self.batch.invalidate()
         self.batch.params = params
-        self.batch.use_ocr = self.ocr_box.isChecked()
-        self.batch.recall_priority = self.recall_box.isChecked()
         self.batch.style = style
         self.batch.detection_mode = detection_mode
         self.batch.prompt_query = prompt_query
@@ -699,8 +723,6 @@ class MainWindow(QMainWindow):
         for attr, slider in self._sliders.items():
             slider.setValue(self.batch.params.get(attr, _knob_default(attr))
                             if self.batch else _knob_default(attr))
-        self.ocr_box.setChecked(self.batch.use_ocr if self.batch else True)
-        self.recall_box.setChecked(self.batch.recall_priority if self.batch else True)
         self.style_box.setCurrentText(STYLE_LABELS.get(self.batch.style if self.batch else None, "自动识别"))
         self.mode_box.setCurrentIndex(max(0, self.mode_box.findData(
             self.batch.detection_mode if self.batch else "auto")))
@@ -866,8 +888,6 @@ class MainWindow(QMainWindow):
         self.reprocess_btn.setEnabled(not busy and bool(self.pages))
         for slider in self._sliders.values():
             slider.setEnabled(not busy)
-        self.ocr_box.setEnabled(not busy)
-        self.recall_box.setEnabled(not busy)
         self.style_box.setEnabled(not busy)
         self.pause_btn.setEnabled(busy and not self._assist_busy)
         self.stop_btn.setEnabled(busy and not self._assist_busy)
@@ -960,13 +980,13 @@ class MainWindow(QMainWindow):
         if self._selection_edit is not None and not self._assist_busy:
             box = self._selection_edit.paint(*segment)
             if box is not None:
-                self.canvas.update_selection_overlay(self._selection_edit.selected, box)
+                self.canvas.update_selection_rgba(_edit_overlay_patch(self._selection_edit, box), box)
                 include, changed = self._selection_edit.last_change
                 total = int(self._selection_edit.selected.sum())
                 action = "添加" if include else "擦除"
                 self.selection_notice.setText(
                     f"本笔{action} {changed:,} 像素 · 当前选中 {total:,} 像素；"
-                    "尚未处理，切图丢弃。")
+                    "尚未处理，切图丢弃。蓝=已有选区 红=本轮添加 灰=本轮擦除。")
 
     def _end_brush_stroke(self):
         if self._selection_edit is not None:
@@ -994,7 +1014,7 @@ class MainWindow(QMainWindow):
         result = self.batch.results[self._current]
         self._start_assisted_worker('find', result, rectangle, thr=self.current_thr(),
                                     close_px=self.current_close_px(),
-                                    use_ocr=self.ocr_box.isChecked(), style=self.current_style())
+                                    use_ocr=True, style=self.current_style())
         self.status.setText("正在圈选范围内识别水印笔画；尚未修改图片")
 
     def confirm_assisted_repair(self):
@@ -1140,8 +1160,8 @@ class MainWindow(QMainWindow):
                              lama_context_margin=vals["lama_context_margin"],
                              lama_tile_overlap=vals["lama_tile_overlap"],
                              lama_mask_dilate=vals["lama_mask_dilate"],
-                             watermark_recall_priority=batch.recall_priority)
-            job = (batch, indices, thr, vals["close_px"], batch.use_ocr, batch.style)
+                             watermark_recall_priority=True)
+            job = (batch, indices, thr, vals["close_px"], True, batch.style)
             jobs.append(job + (True,) if self.automatic_selection else job)
         if not jobs:
             return
@@ -1259,6 +1279,7 @@ class MainWindow(QMainWindow):
             self._fill_metrics(result)
         elif self.batch and row in self.batch.errors:
             self.conditions.setText("处理失败，请检查输入文件和本地模型后重试。")
+        self._fill_actual_params(result)
         if not (0 <= row < len(self.pages)):
             self.canvas.clear()
             self.preview_info.setText("选择图片后即可预览")
@@ -1266,6 +1287,28 @@ class MainWindow(QMainWindow):
         self.render_canvas()
 
         self._refresh_assisted_controls()
+
+    def _fill_actual_params(self, result) -> None:
+        if result is None or not getattr(result, 'processing', None):
+            self.actual_params.setText("本图实际处理参数：—（处理完成后显示）")
+            return
+        proc = result.processing
+        thr = proc.get('thresholds') or {}
+        style = proc.get('watermark_style')
+        parts = [
+            f"水印判定阈值 {thr.get('mask_alpha_min', '—'):g}" if thr.get('mask_alpha_min') is not None else "水印判定阈值 自动",
+            f"笔画连接 {proc.get('mask_close_px', '—')}px",
+            f"选区外扩 {thr.get('lama_mask_dilate', 0):g}px" if thr.get('lama_mask_dilate') is not None else "选区外扩 自动",
+            f"样式 {STYLE_LABELS.get(style, style or '自动识别')}",
+            f"修复 {result.mask.repair_mode or '—'}",
+        ]
+        if result.verdict:
+            parts.append(f"耗时 {result.verdict.elapsed_ms / 1000:.1f} 秒")
+        overridden = [k for k, s in self._sliders.items() if s.value() != _knob_default(k)]
+        knob_names = {attr: label for attr, label, *_ in KNOBS}
+        note = "（当前滑条为默认自动位）" if not overridden else (
+            "（当前滑条有覆盖：" + "、".join(knob_names.get(k, k) for k in overridden) + "，仅影响之后处理的图）")
+        self.actual_params.setText("本图实际处理参数：" + " · ".join(parts) + "\n" + note)
 
     def _fill_metrics(self, result: PageResult) -> None:
         report = result.verdict
@@ -1422,12 +1465,14 @@ class MainWindow(QMainWindow):
         self.canvas.set_brush_mode(editing and editable_view and not self._assist_busy,
                                    include=self.add_brush_btn.isChecked())
         if editing:
-            # 编辑态用高对比青色显示选区：红色叠加在黑色笔画上几乎不可见，
-            # 青色在白底和黑笔画上都清楚，用户能确认每一笔覆盖了哪里。
-            self.canvas.set_selection_overlay(self._selection_edit.selected if editable_view else None,
-                                              color=(0, 190, 255))
+            # 编辑态三色选区：既有选区浅蓝、本轮新涂浅红、本轮回擦浅灰，
+            # 处理黑斑等场景时可一眼区分"这轮动了哪里"与"之前已选的范围"。
+            self.canvas.set_selection_rgba(
+                _edit_overlay_rgba(self._selection_edit)
+                if editable_view else np.zeros((*self.pages[row].image.shape[:2], 4), np.uint8))
             self.selection_notice.setText(
-                "选区已修改，尚未处理；切图丢弃。青色为当前完整选区。" if self._selection_edit.dirty else
+                "选区已修改，尚未处理；切图丢弃。蓝=已有选区 红=本轮添加 灰=本轮擦除。"
+                if self._selection_edit.dirty else
                 "编辑完整选区：添加或擦除，最后一笔优先；点击处理才更新图片。")
             self.preview_hint.setText("滚轮缩放 · 空格＋拖动平移 · B 添加 / E 擦除 · 按住 H 隐藏选区 · ⌘/Ctrl＋Z 撤销" if editable_view else
                                       "拖拽对比视图不能描涂；切回原始图片、水印选区或处理结果继续，编辑仍保留。")
