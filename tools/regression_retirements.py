@@ -11,7 +11,7 @@ PROFILE = Path(__file__).resolve().parents[1] / 'config/regression_retirements.j
 
 
 def load_profile(path=PROFILE):
-    return json.loads(path.read_text()) if path.is_file() else None
+    return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else None
 
 
 def project_baseline(run, inventory, profile, baseline_seal):

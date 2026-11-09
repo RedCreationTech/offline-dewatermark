@@ -23,6 +23,8 @@ cd offline-dewatermark
 ./start.sh gui         # 打开桌面程序
 ```
 
+Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），子命令与 `./start.sh` 完全一致，例如 `start.bat gui`、`start.bat check-data`；脚本内部已处理虚拟环境路径与 UTF-8 编码。
+
 日常使用已有本地依赖和模型；严格离线部署须提前准备资源和对应平台的 Python 依赖。图片输入与评分参考分开，干净图、alpha 和标注不能用于决定当前单图选区或处理结果。
 
 数据与模型从本仓库的 [2026年10月27日资源包](https://github.com/RedCreationTech/offline-dewatermark/releases/tag/resources-2026-10-27) 下载。2026-11-02 已复制原 Release 的六个附件，文件名、大小与 SHA256 保持一致，原仓库 Release 继续保留。资源仍属于 2026-10-27 快照，不能直接视为当前清单，现有工作目录不要被旧包覆盖。
@@ -51,6 +53,8 @@ cd offline-dewatermark
 ```
 
 本机已有观察基线时继续沿用；首次在其他机器建立基线使用 `./start.sh freeze-baseline`，它只记录现状，包括缺陷。规则见 [放行门槛](config/regression_control.json) 与 [分层范围](config/regression_tiers.json)。数据、模型和可比较基线缺失时不能宣称验收完成。
+
+有 NVIDIA 显卡的机器可在任意子命令后加 `--gpu`：WeVisOne 分割探针用 `cuda:0`；LaMa 仅当主环境装有可用的 CUDA 版 onnxruntime 时才走 `WM_LAMA_CUDA=1`，否则保持 CPU 并提示。示例：`./start.sh gui --gpu`（或 `start.bat gui --gpu`）；`./start.sh wevisone --gpu [提示词] [图片]` 单独跑 WeVisOne 单图分割探针（默认 cpu），输出到 `out/WeVisOne环境检查_NN`。注意：现网 LaMa 量化模型在 CUDA 12 版 onnxruntime 上缺少量化算子支持、DirectML 亦不支持其 FFC 结构，本机经实测只能在 CPU 运行；未来如升级驱动与 CUDA 13 运行时，该模型在 CUDA 13 版 onnxruntime 上的可用性需重新实测。
 
 `check-data` 只证明清单校验通过；固定集诊断、工程测试及局部实验不能替代完整发布放行或独立验证。
 

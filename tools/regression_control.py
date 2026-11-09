@@ -37,13 +37,14 @@ def stamp():
 
 
 def load(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(Path(path).read_text(encoding='utf-8'))
 
 
 def save(path, value):
     path = Path(path)
     temp = path.with_suffix('.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
+    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n',
+                    encoding='utf-8')
     temp.replace(path)
 
 
@@ -344,9 +345,9 @@ def verified_run(out):
 
 
 def write_report(out, run, old=None, gate=None):
-    # 固定模板明细报告（tab/搜索，本地逐张核查）。
-    # 旧版《项目防退化控制报告.html》与摘要报告已退役：明细报告覆盖其全部用途。
-    # 只新增文件、不改封存件；失败不阻断主流程。
+    (out / '项目防退化控制报告.html').write_text(content, encoding='utf-8')
+    # 固定模板明细报告（tab/搜索，本地逐张核查）为正式逐张产物；
+    # 上方旧版逐张报告一并保留（兼容既有引用），两者只新增文件、不改封存件；失败不阻断主流程。
     try:
         if not run.get('complete'):
             # 运行未封存前，报告只是过程工作文件：先删旧版再重写，
@@ -356,7 +357,7 @@ def write_report(out, run, old=None, gate=None):
         detail = build_control_report(out)
         print(f'报告已生成：{detail}', flush=True)
     except Exception as exc:
-        print(f'双报告生成失败（不影响封存）：{type(exc).__name__}: {exc}', flush=True)
+        print(f'明细报告生成失败（不影响封存）：{type(exc).__name__}: {exc}', flush=True)
 
 
 def compare(candidate, baseline, out, reviews=None):

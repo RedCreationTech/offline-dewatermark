@@ -75,8 +75,48 @@ class SelectionRepairTests(unittest.TestCase):
         self.assertFalse(edit.selected[10:101, 97].any())
         self.assertFalse(edit.selected[10:101, 103].any())
 
+    def test_manual_brush_on_flat_paper_fills_with_median_color(self):
+        # 均匀纸面上的人工笔画直接中位色填补，不走 LaMa（避免灰调噪点）
+        image = np.full((120, 160, 3), 230, np.uint8)
+        page = PageImage(image, 100, '纸面填补')
+        empty = MaskLayer(np.zeros(image.shape[:2], np.float32), footprint=np.zeros(image.shape[:2], bool),
+                          repair_mode='inpaint')
+        report = VerdictReport(page.key, EngineKind.RASTER, [], {}, {}, [], 1)
+        result = PageResult(page, replace(page, image=image.copy()), empty, report,
+                            processing={'thresholds': {'mask_alpha_min': .08}})
+        edit = SelectionEdit(result)
+        stroke(edit, (120.5, 90.5), diameter=9)
+        request = edit.request(Thresholds())
+        with patch('wm.selection_edit.repair.repair', side_effect=AssertionError(
+                'flat paper must not call LaMa')):
+            applied = apply_selection(result, request)
+        filled = applied.output.image[90, 120]
+        self.assertEqual([int(v) for v in filled], [230, 230, 230])
+        self.assertIn(RepairName.PAPER_CLEANUP, applied.verdict.repairs)
+
+    def test_session_added_and_removed_track_current_round(self):
+        # 本轮新增/回擦只标记本次编辑的改动，与既有选区分开
+        result = example()
+        edit = SelectionEdit(result)
+        initial = edit.overrides.copy()
+        stroke(edit, (120.5, 90.5), diameter=9)           # 本轮新增
+        stroke(edit, (36.5, 34.5), diameter=9, include=False)  # 本轮回擦（原自动选区内）
+        added, removed = edit.session_added, edit.session_removed
+        self.assertTrue(added[90, 120])
+        self.assertFalse(added[50, 50])                    # 既有选区不标新增
+        self.assertGreater(int(added.sum()), 30)           # 直径9圆
+        self.assertTrue(removed[34, 36])
+        self.assertFalse((added & removed).any())
+        edit.undo()  # 撤销擦除
+        self.assertFalse(edit.session_removed.any())
+        self.assertTrue((edit.overrides == initial)[34, 36])
+
     def test_repair_uses_source_not_last_output_and_never_detects_again(self):
         result = example(); edit = SelectionEdit(result)
+        # 人工笔画 surroundings 置为非均匀，绕过"平坦纸面中位色填补"快路径，
+        # 本用例验证的正是 LaMa 分支两次都以原图为输入。
+        result.source.image[60:110, 55:115] = np.random.RandomState(0).randint(
+            100, 240, (50, 60, 3)).astype(np.uint8)
         stroke(edit, (32.5, 40.5), diameter=5, include=False)
         stroke(edit, (100.5, 80.5), diameter=7)
         request = edit.request(Thresholds(lama_mask_dilate=9))
@@ -164,7 +204,7 @@ class SelectionRepairTests(unittest.TestCase):
             applied = apply_selection(result, edit.request(Thresholds()))
         with tempfile.TemporaryDirectory() as folder:
             root = pipeline.write_results([applied], folder)
-            record = json.loads((root/'manifest.json').read_text())['pages'][0]
+            record = json.loads((root/'manifest.json').read_text(encoding='utf-8'))['pages'][0]
             binary = np.array(Image.open(root/record['files']['mask'])) > 0
             np.testing.assert_array_equal(binary, edit.selected)
             with np.load(root/record['files']['mask_data'], allow_pickle=False) as arrays:

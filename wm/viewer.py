@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import math
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 
@@ -41,6 +41,7 @@ class ImageViewer(QWidget):
         self._page_key = None
         self.selection_mode = False
         self.search_rectangle = None
+        self.instance_boxes: list[tuple[int, int, int, int]] = []
         self._selection_start = None
         self.zoom = 1.0
         self.pan = QPointF()
@@ -49,6 +50,7 @@ class ImageViewer(QWidget):
         self.brush_diameter = 12
         self.magnifier_enabled = True
         self._overlay = QPixmap()
+        self._overlay_color = (255, 40, 40)  # 默认红；编辑态由 app 传高对比色
         self._hide_overlay = False
         self._hover = None
         self._painting = False
@@ -68,16 +70,37 @@ class ImageViewer(QWidget):
                        Qt.SplitHCursor if self.comparing else Qt.ArrowCursor)
         self.update()
 
-    def set_selection_overlay(self, selected=None):
+    def set_selection_overlay(self, selected=None, *, color=None):
+        # color: (r,g,b)，编辑态传高对比色；不传则沿用默认红
+        if color is not None:
+            self._overlay_color = tuple(color)
         if selected is None:
             self._overlay = QPixmap()
         else:
             rgba = np.zeros((*selected.shape, 4), np.uint8)
-            rgba[..., :3] = [255, 40, 40]
+            rgba[..., :3] = self._overlay_color
             rgba[..., 3] = np.where(selected, 105, 0)
-            self._overlay = QPixmap.fromImage(QImage(
-                rgba.data, rgba.shape[1], rgba.shape[0], rgba.shape[1]*4,
-                QImage.Format_RGBA8888).copy())
+            self.set_selection_rgba(rgba)
+        self.update()
+
+    def set_selection_rgba(self, rgba: np.ndarray) -> None:
+        """逐像素选区叠加：rgba (H,W,4) uint8，alpha=0 处透明。供编辑态多色显示。"""
+        self._overlay = QPixmap.fromImage(QImage(
+            rgba.data, rgba.shape[1], rgba.shape[0], rgba.shape[1] * 4,
+            QImage.Format_RGBA8888).copy())
+        self.update()
+
+    def update_selection_rgba(self, rgba: np.ndarray, box) -> None:
+        """增量更新叠加层：rgba 为 box 区域的 (h,w,4) patch。"""
+        if self._overlay.isNull():
+            self.set_selection_rgba(rgba)
+            return
+        x0, y0, x1, y1 = box
+        patch = QImage(rgba.data, x1 - x0, y1 - y0, (x1 - x0) * 4, QImage.Format_RGBA8888)
+        painter = QPainter(self._overlay)
+        painter.setCompositionMode(QPainter.CompositionMode_Source)
+        painter.drawImage(QPointF(x0, y0), patch)
+        painter.end()
         self.update()
 
     def update_selection_overlay(self, selected, box):
@@ -86,7 +109,7 @@ class ImageViewer(QWidget):
             return
         x0, y0, x1, y1 = box
         rgba = np.zeros((y1-y0, x1-x0, 4), np.uint8)
-        rgba[..., :3] = [255, 40, 40]
+        rgba[..., :3] = self._overlay_color
         rgba[..., 3] = np.where(selected[y0:y1, x0:x1], 105, 0)
         patch = QImage(rgba.data, x1-x0, y1-y0, (x1-x0)*4, QImage.Format_RGBA8888)
         painter = QPainter(self._overlay)
@@ -148,6 +171,11 @@ class ImageViewer(QWidget):
         self._selection_start = None
         self.update()
 
+    def set_instance_boxes(self, boxes):
+        """模型给出的水印实例框（原图像素坐标），仅显示，不构成选区。"""
+        self.instance_boxes = [tuple(int(v) for v in box) for box in (boxes or [])]
+        self.update()
+
     def _image_point(self, point):
         rect = self.image_rect()
         return (max(0., min(float(self.before.width()),
@@ -172,6 +200,7 @@ class ImageViewer(QWidget):
             self.set_fraction(0.5)
             self.clear_search_rectangle()
             self.set_selection_mode(False)
+            self.set_instance_boxes([])
         self._page_key = page_key
         self.before = QPixmap.fromImage(to_qimage(before))
         self.after = QPixmap.fromImage(to_qimage(after)) if after is not None else QPixmap()
@@ -393,7 +422,12 @@ class ImageViewer(QWidget):
             return
         rect = self.image_rect()
         painter.save()
-        painter.setClipRect(QRectF(self.rect()).adjusted(4, 54, -4, -4))
+        # 按圆角矩形路径精确裁剪：矩形边距裁剪会在放大时留下可见的深色边条，
+        # 路径裁剪让图片顶/底/边都能完整 pan 到，四角保持圆角；
+        # 路径与背景填充完全对齐（不内缩），避免图片四周露出深色细框。
+        clip_path = QPainterPath()
+        clip_path.addRoundedRect(QRectF(self.rect()), 16, 16)
+        painter.setClipPath(clip_path)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, self.image_scale() < 1)
         painter.drawPixmap(rect, self.after if self.comparing else self.before,
                            QRectF(self.before.rect()))
@@ -425,6 +459,15 @@ class ImageViewer(QWidget):
             painter.setBrush(Qt.NoBrush)
             painter.setPen(QPen(QColor('#ffd17a'), 2, Qt.DashLine))
             painter.drawRect(box)
+        if self.instance_boxes:
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor('#ff9f43'), 2))
+            for x0, y0, x1, y1 in self.instance_boxes:
+                box = QRectF(rect.left()+x0*rect.width()/self.before.width(),
+                             rect.top()+y0*rect.height()/self.before.height(),
+                             (x1-x0)*rect.width()/self.before.width(),
+                             (y1-y0)*rect.height()/self.before.height())
+                painter.drawRect(box)
         if self.brush_mode and self._hover is not None and rect.contains(self._hover):
             radius = self.brush_diameter*self.image_scale()/2
             painter.setBrush(Qt.NoBrush)

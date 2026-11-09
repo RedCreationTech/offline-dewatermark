@@ -9,13 +9,19 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from hashlib import sha256
 from time import perf_counter
-from zoneinfo import ZoneInfo
 
 import numpy as np
 
+try:
+    from zoneinfo import ZoneInfo
+    _SHANGHAI = ZoneInfo('Asia/Shanghai')
+except Exception:  # Windows 无系统时区库且未装 tzdata 时，用固定 UTC+8（上海自 1991 年起无夏令时）
+    from datetime import timedelta, timezone
+    _SHANGHAI = timezone(timedelta(hours=8), 'Asia/Shanghai')
+
 from . import repair, verdict
 from .assisted import image_hash
-from .contract import EngineKind, MaskLayer, MaskSource, PageResult, Thresholds
+from .contract import EngineKind, MaskLayer, MaskSource, PageResult, RepairName, Thresholds
 
 
 def automatic_selection(result):
@@ -38,8 +44,21 @@ class SelectionEdit:
             self.overrides[current & ~self.automatic] = 1
             self.overrides[~current & self.automatic] = 0
         self.selected = current.copy()
+        self._initial_overrides = self.overrides.copy()  # 会话快照：区分本轮新增/回擦
+        self.last_change = (True, 0)  # 最近一笔的 (是否添加, 像素数)，供界面反馈
         self.undo_stack = []
         self.redo_stack = []
+        self._stroke = None
+
+    @property
+    def session_added(self) -> np.ndarray:
+        """本轮编辑新加入选区的像素（会话内由非手动提升为手动添加）。"""
+        return (self.overrides == 1) & (self._initial_overrides != 1)
+
+    @property
+    def session_removed(self) -> np.ndarray:
+        """本轮编辑从选区擦除的像素（会话内被显式排除）。"""
+        return (self.overrides == 0) & (self._initial_overrides != 0)
         self._stroke = None
 
     @property
@@ -76,6 +95,7 @@ class SelectionEdit:
         region[hit] = int(include)
         self.selected[y0:y1, x0:x1][hit] = include
         self._stroke.append((x0, y0, x1, y1, before, region.copy()))
+        self.last_change = (bool(include), int((hit & (before != int(include))).sum()))
         return x0, y0, x1, y1
 
     def end_stroke(self):
@@ -131,6 +151,23 @@ def _checked_repair(source, layer, thresholds, allowed):
     return output, methods
 
 
+def _flat_paper_fill(source: np.ndarray, mask: np.ndarray):
+    """人工笔画若位于均匀纸面上：用周围环带的中位色均匀填补，返回颜色数组或 None。
+
+    LaMa 的统计填充在纯白纸面会留下灰调噪点（尤其周围有黑字时）；周围环带
+    方差足够小说明此处就是平坦纸面，直接填中位色更干净、且绝不引入纹理。
+    周围复杂（压在文字/图案上）时返回 None，交由 LaMa 处理。
+    """
+    import cv2
+    ring = cv2.dilate(mask.astype(np.uint8), np.ones((31, 31), np.uint8)).astype(bool) & ~mask
+    if int(ring.sum()) < max(200, int(mask.sum())):
+        return None
+    pixels = source[..., :3][ring].astype(np.float32)
+    if float(pixels.std(axis=0).max()) > 6.0:
+        return None
+    return np.median(pixels, axis=0).astype(np.uint8)
+
+
 def apply_selection(result: PageResult, request: SelectionRequest) -> PageResult:
     source = result.source.image
     selected, overrides, settings = request.selected, request.overrides, request.thresholds
@@ -165,13 +202,20 @@ def apply_selection(result: PageResult, request: SelectionRequest) -> PageResult
         output[retained] = restored[retained]
         methods.extend(used)
     if manual.any():
-        # This binary permission field is never sent to alpha inversion.
-        layer = MaskLayer(np.zeros(selected.shape, np.float32), source=MaskSource.HUMAN,
-                          confidence=1, selection=manual, footprint=manual,
-                          method='explicit_brush', repair_mode='inpaint')
-        restored, used = _checked_repair(source, layer, settings, manual)
-        output[manual] = restored[manual]
-        methods.extend(used)
+        # 平坦纸面上的人工笔画直接用周围中位色均匀填补（LaMa 会留灰调噪点）；
+        # 周围复杂时回退 LaMa。改动仍被限制在笔画选区内。
+        paper = _flat_paper_fill(source, manual)
+        if paper is not None:
+            output[manual] = paper
+            methods.append(RepairName.PAPER_CLEANUP)
+        else:
+            # This binary permission field is never sent to alpha inversion.
+            layer = MaskLayer(np.zeros(selected.shape, np.float32), source=MaskSource.HUMAN,
+                              confidence=1, selection=manual, footprint=manual,
+                              method='explicit_brush', repair_mode='inpaint')
+            restored, used = _checked_repair(source, layer, settings, manual)
+            output[manual] = restored[manual]
+            methods.extend(used)
     elapsed = round((perf_counter()-start)*1000)
     changed = np.any(output != source, axis=2)
     layer = replace(automatic.mask, alpha=np.where(selected, automatic.mask.alpha, 0),
@@ -190,7 +234,7 @@ def apply_selection(result: PageResult, request: SelectionRequest) -> PageResult
     processing = deepcopy(result.processing)
     history = processing.setdefault('human_assistance', [])
     history.append(dict(operation='edit_complete_selection',
-                        confirmed_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds'),
+                        confirmed_at=datetime.now(_SHANGHAI).isoformat(timespec='seconds'),
                         source_sha256=request.source_hash, base_output_sha256=request.base_output_hash,
                         candidate_sha256=request.selection_hash, selected_pixels=int(selected.sum()),
                         added_pixels=int((selected & ~auto).sum()), removed_pixels=int((auto & ~selected).sum()),

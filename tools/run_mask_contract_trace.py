@@ -27,7 +27,8 @@ def digest(array):
 
 
 def save_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False))
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False),
+                    encoding='utf-8')
 
 
 class Trace:
@@ -228,7 +229,7 @@ def main():
     parser.add_argument('--candidate-edges', action='store_true', help='显式核对原尺寸边缘对比，包含候选开关')
     parser.add_argument('--strategy-abstain', action='store_true', help='对缺少可靠反解模型的正文页面暂停生成式重绘')
     args = parser.parse_args()
-    task = json.loads(args.task.read_text())
+    task = json.loads(args.task.read_text(encoding='utf-8'))
     if set(task) != {'mode', 'inputs', 'settings'}:
         parser.error('任务包含源图、模式和参数以外的字段')
     if (args.task.parent / '逐阶段记录索引.json').exists() or (args.task.parent / 'inference.json').exists():

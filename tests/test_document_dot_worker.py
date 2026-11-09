@@ -21,8 +21,8 @@ class DocumentDotWorkerArchiveTests(unittest.TestCase):
                     with self.assertRaises(SystemExit) as error:
                         main()
                 self.assertEqual(error.exception.code, 2)
-                self.assertEqual(result.read_text(), 'original sealed result')
-                self.assertEqual(task.read_text(), '{}')
+                self.assertEqual(result.read_text(encoding='utf-8'), 'original sealed result')
+                self.assertEqual(task.read_text(encoding='utf-8'), '{}')
 
 
 if __name__ == '__main__':

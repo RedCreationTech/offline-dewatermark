@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>方案材料｜离线智能去水印项目方向（2026-11-06）</title>
+  <style>
+:root{color-scheme:light;--bg:#f4f5f0;--paper:#fff;--ink:#162b26;--muted:#4c6059;
+  --green:#12624d;--line:#d9e1d8;--tint:#eaf3e9;--dark:#153e34}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+main{width:min(1080px,calc(100% - 48px));margin:38px auto 48px}
+.hero{padding:36px 42px 40px;border-radius:18px;background:linear-gradient(110deg,#143b31,#205848);color:white}
+.meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;color:#d7eee0;font-size:.81rem;letter-spacing:.08em}
+h1,h2,h3,p{margin:0}h1{font-size:clamp(1.85rem,4.6vw,3.1rem);line-height:1.25;margin:14px 0 12px}
+.hero p{max-width:44rem;color:#edf6f0;font-size:1rem}
+section{margin-top:32px}h2{font-size:1.45rem;line-height:1.35;margin-bottom:13px}
+h3{font-size:1.16rem;line-height:1.45}
+.modes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px}
+.mode,.stage{background:var(--paper);border:1px solid var(--line);border-radius:12px}
+.mode{padding:20px 19px}.mode.focus{border-color:#86ab94;background:#f8fcf6}
+.badge,.phase{font-size:.78rem;line-height:1.45;font-weight:700;color:var(--green)}
+.badge{display:inline-block;padding:4px 8px;border-radius:5px;background:var(--tint);margin-bottom:9px}
+.mode p{font-size:.92rem;color:var(--muted);margin-top:8px}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:7px 11px;padding:12px 16px;margin-top:13px;
+  background:var(--tint);border-radius:9px;font-size:.9rem;color:var(--dark)}
+.flow strong{margin-right:5px}.arrow{font-weight:700;color:var(--green)}
+.stages{display:grid;gap:12px}.stage{display:grid;grid-template-columns:3.2rem minmax(0,1fr);gap:14px;padding:19px 22px}
+.number{width:2.9rem;height:2.9rem;display:grid;place-items:center;border-radius:9px;background:var(--dark);color:white;
+  font-weight:700;font-variant-numeric:tabular-nums}
+.stage ul{padding-left:1.25em;margin:8px 0 0;font-size:.94rem;color:var(--muted)}
+.stage li+li{margin-top:5px}.stage strong{color:var(--ink)}
+.phase{margin-top:6px}.footnote{margin-top:13px;font-size:.88rem;color:var(--muted)}
+footer{border-top:1px solid var(--line);margin-top:26px;padding-top:12px;font-size:.82rem;color:var(--muted)}
+.term{white-space:nowrap}.help{display:inline-grid;place-items:center;vertical-align:middle;width:1.7rem;height:1.7rem;
+  padding:0;margin:0 0 0 .12rem;border:0;border-radius:6px;background:transparent;font:inherit;font-size:.84rem;cursor:pointer}
+.help:hover,.help[aria-expanded="true"]{background:var(--tint)}.help:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.tooltip{position:fixed;z-index:2;width:min(19rem,calc(100vw - 24px));padding:12px 14px;background:var(--dark);color:white;
+  border-radius:9px;box-shadow:0 6px 18px #142e2330;font-size:.88rem;line-height:1.55}
+.tooltip[hidden]{display:none}
+@media(max-width:720px){main{width:calc(100% - 28px);margin:14px auto 30px}.hero{padding:23px 21px}
+  .modes{grid-template-columns:1fr}.mode{padding:15px 17px}.stage{padding:15px 13px;gap:9px}
+  .flow{padding:11px 12px}section{margin-top:24px}}
+@media print{body{background:white}main{width:100%;margin:0}.hero{background:#eaf3e9;color:var(--ink)}
+  .hero p,.meta{color:var(--ink)}.help,.tooltip{display:none!important}.stage,.mode{break-inside:avoid}}
+</style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="meta"><span>产品方向 · 下一阶段</span><time datetime="2026-11-06">2026-11-06</time></div>
+    <h1>离线智能去水印项目方向</h1>
+    <p>用户可以直接自动去水印，也可以用一句话指定要去除的复杂水印，或用笔刷细调要修复的区域。</p>
+  </header>
+
+  <section aria-labelledby="modes">
+    <h2 id="modes">三种去水印方式</h2>
+    <div class="modes">
+      <article class="mode">
+        <span class="badge">现有方式</span>
+        <h3>自动识别去水印</h3>
+        <p>沿用当前处理方式，由软件自动识别水印并修复，适合已能较好处理的简单、常见水印。</p>
+      </article>
+      <article class="mode focus">
+        <span class="badge">本阶段新增</span>
+        <h3>提示词去水印</h3>
+        <p>用户输入<span class="term">提示词<button type="button" class="help" data-term="prompt" aria-label="解释提示词" aria-controls="term-panel" aria-expanded="false">❓</button></span>，例如「只去掉整张图上重复出现的浅灰色斜向文字」。由<span class="term">WeVisOne‑VL‑2B<button type="button" class="help" data-term="model" aria-label="解释WeVisOne‑VL‑2B" aria-controls="term-panel" aria-expanded="false">❓</button></span>查找指定水印，生成<span class="term">水印掩码<button type="button" class="help" data-term="mask" aria-label="解释水印掩码" aria-controls="term-panel" aria-expanded="false">❓</button></span>供后续修复。</p>
+      </article>
+      <article class="mode">
+        <span class="badge">现有方式</span>
+        <h3>手动添加或擦除选区</h3>
+        <p>用笔刷补上漏选的水印笔画，用橡皮擦撤销误选的区域。按调整后的选区修复，适合局部细节处理。</p>
+      </article>
+    </div>
+    <div class="flow" aria-label="提示词去水印流程">
+      <strong>提示词方式</strong><span>输入图片和目标描述</span><span class="arrow" aria-hidden="true">→</span>
+      <span>模型找出指定水印</span><span class="arrow" aria-hidden="true">→</span>
+      <span>预览水印选区</span><span class="arrow" aria-hidden="true">→</span><span>按选区修复并预览结果</span>
+    </div>
+  </section>
+
+  <section aria-labelledby="roadmap">
+    <h2 id="roadmap">接下来的工作顺序</h2>
+    <div class="stages">
+      <article class="stage">
+        <span class="number" aria-hidden="true">01</span>
+        <div>
+          <h3>先验证找水印，再测试按掩码修复</h3>
+          <ul>
+            <li><strong>提示词找水印。</strong>用原图和水印样式描述测试 WeVisOne‑VL‑2B，查看目标是否选全，正文和背景是否被误选。</li>
+            <li><strong>按掩码修复。</strong>把通过检查的掩码交给图像修复流程，对照原图、选区和处理结果，检查水印残留以及正文、背景是否受损。</li>
+          </ul>
+          <p class="phase">阶段产出 · 提示词、选区和修复前后对照</p>
+        </div>
+      </article>
+      <article class="stage">
+        <span class="number" aria-hidden="true">02</span>
+        <div>
+          <h3>在页面接入「提示词去水印」</h3>
+          <ul>
+            <li><strong>提供入口。</strong>让用户可以在自动识别、提示词去水印、手动选区三种方式之间选择。</li>
+            <li><strong>串起操作。</strong>输入目标描述后预览选区，确认后修复。对空选区或识别失败给出明确反馈，用户可以改写描述或改用笔刷。</li>
+          </ul>
+          <p class="phase">阶段产出 · 页面入口、选区预览和修复结果</p>
+        </div>
+      </article>
+    </div>
+    <p class="footnote">首轮提示词测试可沿用此前的 9 张斜向平铺文字图，逐张保留漏选、误选和修复结果。</p>
+  </section>
+
+  <section aria-labelledby="datasets">
+    <h2 id="datasets">整理三套图片集</h2>
+    <div class="modes">
+      <article class="mode">
+        <span class="badge">图片集 01</span>
+        <h3>自动识别即可处理</h3>
+        <p>自动识别并修复后，水印已去除，正文和背景无明显受损。用这组图验证常见水印能否一步处理。</p>
+      </article>
+      <article class="mode focus">
+        <span class="badge">图片集 02</span>
+        <h3>提供提示词后可处理</h3>
+        <p>自动处理效果不理想，输入详细、精准的提示词后可以完成修复。写明水印可辨认的文字或图案、颜色、位置和方向。遇到重复铺排或边缘裁切时，说明哪些部分需要处理。每张图保存验证过的完整提示词，方便复测。</p>
+      </article>
+      <article class="mode">
+        <span class="badge">图片集 03</span>
+        <h3>小瑕疵需画笔细修</h3>
+        <p>自动或提示词处理后只剩局部小瑕疵，可用画笔补上漏选、擦除误选，再完成修复。</p>
+      </article>
+    </div>
+    <p class="footnote">按实际达到可接受效果所需的最少操作归组，每张只进入一套图片集。保留原图、处理前后对照和归类依据，结果还未验证的图片先标记为待确认。</p>
+  </section>
+  <footer>项目方向稿 · 现有方式与待接入功能分别标注</footer>
+</main>
+<div id="term-panel" class="tooltip" role="tooltip" aria-live="polite" hidden></div>
+<script id="term-data" type="application/json">{"prompt": ["提示词", "用户用自然语言描述要去掉的水印，可以写明样式、颜色、位置或可辨认的文字。"], "model": ["WeVisOne‑VL‑2B", "本阶段选用的视觉模型。计划将原图和用户的提示词一起交给它，测试它能否圈出指定水印。"], "mask": ["水印掩码", "与原图位置对应的选区，标记哪些像素要修复。对于文字水印，选区应沿笔画分布并保留字洞和字间空白。"]}</script>
+<script>
+const terms = JSON.parse(document.getElementById('term-data').textContent);
+const panel = document.getElementById('term-panel');
+let active = null;
+
+function closeTerm() {
+  if (active) active.setAttribute('aria-expanded', 'false');
+  active = null;
+  panel.hidden = true;
+}
+
+function placeTerm() {
+  if (!active) return;
+  const button = active.getBoundingClientRect();
+  const box = panel.getBoundingClientRect();
+  const left = Math.max(12, Math.min(button.left, innerWidth - box.width - 12));
+  const top = button.bottom + box.height + 20 < innerHeight
+    ? button.bottom + 8 : Math.max(12, button.top - box.height - 8);
+  panel.style.left = left + 'px';
+  panel.style.top = top + 'px';
+}
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('button[data-term]');
+  const wasActive = button === active;
+  if (!button && panel.contains(event.target)) return;
+  closeTerm();
+  if (!button || wasActive) return;
+  active = button;
+  active.setAttribute('aria-expanded', 'true');
+  panel.textContent = terms[active.dataset.term][1];
+  panel.hidden = false;
+  placeTerm();
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeTerm();
+});
+window.addEventListener('scroll', closeTerm);
+window.addEventListener('resize', placeTerm);
+</script>
+</body>
+</html>

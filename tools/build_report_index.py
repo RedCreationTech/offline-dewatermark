@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from html import escape, unescape
 from html.parser import HTMLParser
 import hashlib
@@ -13,7 +13,12 @@ import shutil
 
 mode_label_legacy = {'desktop': '桌面默认', 'desktop_protected': '桌面关闭补全', 'cli': 'CLI 默认'}
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+    _SHANGHAI = ZoneInfo('Asia/Shanghai')
+except Exception:  # Windows 无系统时区库且未装 tzdata 时，用固定 UTC+8（上海自 1991 年起无夏令时）
+    _SHANGHAI = timezone(timedelta(hours=8), 'Asia/Shanghai')
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'out'
@@ -207,9 +212,9 @@ def baseline_card():
     pointer_path = ROOT / '.regression-control/baseline.json'
     if not pointer_path.is_file():
         return None, None  # 本机尚未建立观察基线，跳过基线卡片
-    pointer = json.loads(pointer_path.read_text())
+    pointer = json.loads(pointer_path.read_text(encoding='utf-8'))
     directory = Path(pointer['path'])
-    run = json.loads((directory / '运行记录.json').read_text())
+    run = json.loads((directory / '运行记录.json').read_text(encoding='utf-8'))
     complete = run.get('complete') and run.get('integrity_verified') and (directory / '封存校验.json').is_file()
     rows = run['records']
     failures = sum(r['status'] != 'completed' for r in rows)
@@ -272,8 +277,10 @@ def discover(cards, baseline):
             if not run_record.exists() or not json.loads(run_record.read_text()).get('complete'):
                 continue
         name = path.name
-        if any(k in str(path) for k in ('/代码快照/', '/基线代码/', '/暂存代码快照/', '/可维护源文件/', '/原生编辑工作区/', '/样本移除留档/', '/整理前备份/', '/更新前备份/')):
+        if any(k in path.as_posix() for k in ('/代码快照/', '/基线代码/', '/暂存代码快照/', '/可维护源文件/', '/原生编辑工作区/', '/样本移除留档/', '/整理前备份/', '/更新前备份/')):
             continue
+        if any(k in path.as_posix() for k in ('/.venv/', '/third_party/')):
+            continue  # 第三方库自带页面与虚拟环境内部文件不是项目报告
         if any(k in name for k in ('入口片段', '备份', '留档', '修改前', '更新前', '添加方案入口前', '分类前')):
             continue
         if name in ('水印选区与处理结果复核.html', '官网列表.html'):
@@ -281,7 +288,7 @@ def discover(cards, baseline):
         if name == 'review.html' and any(k in str(path) for k in ('recall_priority', 'stroke_selection')):
             continue  # Batch drilldowns are reachable from their parent report.
         parser = Text()
-        raw = path.read_text(errors='replace')
+        raw = path.read_text(encoding='utf-8', errors='replace')
         parser.feed(raw)
         title = ''.join(parser.title).strip()
         # 防退化控制报告的标题补日期时间（封存件不改，只在目录显示名上补）。
@@ -409,11 +416,11 @@ JS = '''
 
 
 def main():
-    now = datetime.now(ZoneInfo('Asia/Shanghai'))
+    now = datetime.now(_SHANGHAI)
     folder = OUT / '报告目录整理' / now.strftime('%Y%m%d_%H%M%S_%f')
     folder.mkdir(parents=True, exist_ok=False)
     if INDEX.is_file():
-        source = INDEX.read_text()
+        source = INDEX.read_text(encoding='utf-8')
         shutil.copyfile(INDEX, folder / '总目录_分类前备份.html')
     else:
         source = ''  # 首次在本机生成总目录，从空分类起步
@@ -518,13 +525,13 @@ def main():
 <section id="report-panel" data-catalog-panel="true" role="tabpanel" aria-labelledby="tab-{initial}"><div class="toolbar"><div><h2 id="category-heading">全部报告</h2><p id="category-description">按上方标签切换分类。</p><p id="result-count" role="status" aria-live="polite">共 {len(cards)} 个入口</p></div><div class="search"><label><span class="sr-label" hidden>搜索当前分类的报告</span><input id="report-search" type="search" aria-label="搜索当前分类的报告" placeholder="在当前分类搜索报告…"></label><button id="clear-search" type="button">清空</button></div></div>
 <div class="cards">{''.join(body)}</div><p id="empty-state" class="empty" hidden>当前分类没有匹配的报告。可清空搜索或切换“全部报告”。</p></section>
 <noscript><p>JavaScript 未启用，以下已展示全部报告；浏览器查找仍可使用。</p></noscript><footer>本页与报告均从本地文件打开，无需联网。点击标题查看完整报告；子批次、逐图输出和原始数据从对应主报告继续进入。目录分类不改变原始报告、实验结论或封存记录。</footer></main><script>{js}</script></body></html>'''
-    INDEX.write_text(page)
+    INDEX.write_text(page, encoding='utf-8')
     if sealed_report_hash is not None and hashlib.sha256(report.read_bytes()).hexdigest() != sealed_report_hash:
         raise RuntimeError('封存报告不应被目录整理修改')
     save = dict(updated_at=now.isoformat(), entries=len(cards), by_category=dict(counts),
                 baseline_report_unchanged=True, backup=str(folder / '总目录_分类前备份.html') if INDEX.is_file() else None,
                 preserved_original_entries=len(curated), added_entries=len(cards) - len(curated))
-    (folder / '目录整理记录.json').write_text(json.dumps(save, ensure_ascii=False, indent=2))
+    (folder / '目录整理记录.json').write_text(json.dumps(save, ensure_ascii=False, indent=2), encoding='utf-8')
     print(json.dumps(save, ensure_ascii=False, indent=2))
 
 

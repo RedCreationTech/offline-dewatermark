@@ -10,6 +10,8 @@
 #   ./start.sh control ...  防退化控制工具（resume/compare/promote 等）
 #   ./start.sh check-data   校验固定回归集，不运行模型
 #   ./start.sh gui [文件]   启动桌面前端
+#   ./start.sh wevisone [--gpu] [query] [image]  单图分割探针（默认 cpu，--gpu 走 cuda:0）
+#   任意子命令后加 --gpu    LaMa 走 WM_LAMA_CUDA=1，WeVisOne 走 cuda:0
 #   ./start.sh eval         仅跑固定核心回归集
 #   ./start.sh report       显示最近一次最小回归报告路径
 set -euo pipefail
@@ -17,6 +19,14 @@ cd "$(dirname "$0")"
 
 PY="${PYTHON:-}"
 VENV=.venv
+# 跨平台虚拟环境：Windows Git Bash 用 Scripts\，macOS/Linux 用 bin/
+if [ -x "$VENV/Scripts/python.exe" ]; then
+    VENV_PY="$VENV/Scripts/python.exe"; VENV_PIP="$VENV/Scripts/pip.exe"
+else
+    VENV_PY="$VENV/bin/python"; VENV_PIP="$VENV/bin/pip"
+fi
+# Windows Git Bash（GBK 代码页）下保证 Python 按 UTF-8 读写项目数据
+case "${OSTYPE:-}" in msys*|cygwin*) export PYTHONUTF8=1 ;; esac
 MIN_FREE_GB=5
 
 say()  { printf '\033[1;34m[start]\033[0m %s\n' "$*"; }
@@ -43,7 +53,7 @@ pick_python() {
 
 # ---------------------------------------------------------------- 依赖安装
 setup_venv() {
-    if [ ! -x "$VENV/bin/python" ]; then
+    if [ ! -x "$VENV_PY" ]; then
         say "创建虚拟环境 $VENV"
         "$PY" -m venv "$VENV"
     fi
@@ -56,26 +66,26 @@ setup_venv() {
     # 其中个别包（实测：onnxruntime 1.31 无 x86_64 轮、pymupdf 2.0 要求 Python>=3.14）。
     # 此时按 MIGRATION.md §5 退回手写清单 requirements.txt，仅放宽装不上的包，
     # 其余包仍按 requirements.txt 的精确钉死版本安装，装完用 eval 对表验收。
-    if "$VENV/bin/pip" install --dry-run -q -r requirements.lock >/dev/null 2>&1; then
-        "$VENV/bin/pip" install -r requirements.lock
+    if "$VENV_PIP" install --dry-run -q -r requirements.lock >/dev/null 2>&1; then
+        "$VENV_PIP" install -r requirements.lock
     else
         warn "requirements.lock 原样装不上（平台 wheel 差异），改用 requirements.txt 并放宽 onnxruntime"
         local ort
-        ort=$("$VENV/bin/pip" index versions onnxruntime 2>/dev/null \
+        ort=$("$VENV_PIP" index versions onnxruntime 2>/dev/null \
               | awk '/LATEST|versions:/{print $NF}' | tr -d ',)' | head -1)
         [ -n "$ort" ] || die "无法确定本平台可用 onnxruntime 版本"
         grep -v '^onnxruntime==' requirements.txt > /tmp/req_local.txt
         echo "onnxruntime==$ort" >> /tmp/req_local.txt
         say "onnxruntime 放宽到 ${ort}（其余按 requirements.txt 钉死）"
-        "$VENV/bin/pip" install -r /tmp/req_local.txt
+        "$VENV_PIP" install -r /tmp/req_local.txt
     fi
     touch "$VENV/.audit_deps_ok"
 }
 
 selfcheck_deps() {
     say "依赖自检"
-    "$VENV/bin/python" -c "import numpy, cv2, skimage, fitz, PIL, onnxruntime; print('  核心依赖 OK')"
-    if "$VENV/bin/python" -c "import PySide6" 2>/dev/null; then
+    "$VENV_PY" -c "import numpy, cv2, skimage, fitz, PIL, onnxruntime; print('  核心依赖 OK')"
+    if "$VENV_PY" -c "import PySide6" 2>/dev/null; then
         echo "  PySide6 OK（GUI 可用）"
     else
         warn "PySide6 不可用，gui 子命令将失败"
@@ -84,13 +94,13 @@ selfcheck_deps() {
 
 # ---------------------------------------------------------------- LaMa 模型
 ensure_model() {
-    if "$VENV/bin/python" -c "from wm.lama import is_available; exit(0 if is_available() else 1)" 2>/dev/null; then
+    if "$VENV_PY" -c "from wm.lama import is_available; exit(0 if is_available() else 1)" 2>/dev/null; then
         say "LaMa 模型就绪"
         return
     fi
     say "首次运行：下载 LaMa ONNX 模型（~93MB，来自 HuggingFace opencv/inpainting_lama）"
     check_disk
-    HF_HUB_OFFLINE=0 "$VENV/bin/python" - <<'EOF'
+    HF_HUB_OFFLINE=0 "$VENV_PY" - <<'EOF'
 import numpy as np, cv2
 from wm.lama import inpaint
 img = np.full((512, 512, 3), 255, np.uint8)
@@ -102,7 +112,7 @@ EOF
 
 # ---------------------------------------------------------------- 字体检查
 check_fonts() {
-    if "$VENV/bin/python" -c "
+    if "$VENV_PY" -c "
 from wm.synth import _resolve_font
 _resolve_font('hei'); _resolve_font('body'); _resolve_font('head')
 " 2>/dev/null; then
@@ -118,7 +128,7 @@ _resolve_font('hei'); _resolve_font('body'); _resolve_font('head')
         [ -f "/System/Library/Fonts/Hiragino Sans GB.ttc" ] && \
             ln -sf "/System/Library/Fonts/Hiragino Sans GB.ttc" wm/fonts/wqy-zenhei.ttc
     fi
-    if "$VENV/bin/python" -c "
+    if "$VENV_PY" -c "
 from wm.synth import _resolve_font
 _resolve_font('hei'); _resolve_font('body'); _resolve_font('head')
 " 2>/dev/null; then
@@ -136,17 +146,17 @@ cmd_setup() {
 
 cmd_eval() {
     say "固定核心回归：36 个输入文件 / 48 张或页"
-    HF_HUB_OFFLINE=1 "$VENV/bin/python" tools/run_min_regression.py --suite core
+    HF_HUB_OFFLINE=1 "$VENV_PY" tools/run_min_regression.py --suite core
 }
 
 cmd_test() {
     shift || true
     say "日常按影响分层检查；局部通过不能更新默认基线"
-    HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV/bin/python" tools/daily_check.py "$@"
+    HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/daily_check.py "$@"
 }
 
 cmd_report() {
-    "$VENV/bin/python" - <<'EOF'
+    "$VENV_PY" - <<'EOF'
 from pathlib import Path
 reports=list(Path('out/项目防退化控制').glob('*/项目防退化控制报告.html'))
 reports+=list(Path('out/防退化对照').glob('*/项目防退化控制报告.html'))
@@ -159,7 +169,7 @@ EOF
 
 cmd_gui() {
     shift || true
-    exec "$VENV/bin/python" -m wm.app "$@"
+    exec "$VENV_PY" -m wm.app "$@"
 }
 
 main() {
@@ -168,14 +178,37 @@ main() {
         setup)  cmd_setup ;;
         eval)   cmd_setup; cmd_eval ;;
         test)   cmd_test "$@" ;;
-        test-release) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV/bin/python" tools/daily_check.py "$@" --level full ;;
-        freeze-baseline) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV/bin/python" tools/regression_control.py freeze "$@" ;;
-        control-inventory) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV/bin/python" tools/regression_control.py inventory "$@" ;;
-        control) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV/bin/python" tools/regression_control.py "$@" ;;
+        test-release) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/daily_check.py "$@" --level full ;;
+        freeze-baseline) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/regression_control.py freeze "$@" ;;
+        control-inventory) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/regression_control.py inventory "$@" ;;
+        control) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/regression_control.py "$@" ;;
+        wevisone) shift
+            WVPY=out/third_party/WeVisOne-VL/.venv/bin/python
+            [ -x "$WVPY" ] || WVPY=out/third_party/WeVisOne-VL/.venv/Scripts/python.exe
+            [ -x "$WVPY" ] || die "WeVisOne 环境未安装，请先按配置文档第 06 节准备 out/third_party/WeVisOne-VL"
+            HF_HUB_OFFLINE=1 "$WVPY" out/试跑_wevisone.py "$WV_DEVICE" "$@" ;;
         report) cmd_report ;;
-        check-data) "$VENV/bin/python" tools/run_min_regression.py --validate-only ;;
+        check-data) "$VENV_PY" tools/run_min_regression.py --validate-only ;;
         gui)    cmd_setup; cmd_gui "$@" ;;
-        *) die "未知子命令：${sub}（可用：setup/check-data/eval/test/test-release/freeze-baseline/control-inventory/control/report/gui）" ;;
+        *) die "未知子命令：${sub}（可用：setup/check-data/eval/test/test-release/freeze-baseline/control-inventory/control/report/gui/wevisone）" ;;
     esac
 }
+# --gpu 标志（可出现在任意位置）：LaMa 走 WM_LAMA_CUDA=1，WeVisOne 用 cuda:0
+WV_DEVICE=cpu
+filtered=()
+for a in "$@"; do
+    case "$a" in
+        --gpu) WV_DEVICE=cuda:0
+               if "$VENV_PY" -c "import onnxruntime as o;exit(0 if 'CUDAExecutionProvider' in o.get_available_providers() else 1)" >/dev/null 2>&1; then
+                   export WM_LAMA_CUDA=1
+                   say "GPU 模式：LaMa 使用 WM_LAMA_CUDA=1，WeVisOne 使用 cuda:0"
+               else
+                   warn "GPU 模式：主环境未安装可用的 CUDA 版 onnxruntime，LaMa 保持 CPU；WeVisOne 使用 cuda:0"
+               fi ;;
+        *) filtered+=("$a") ;;
+    esac
+done
+if [ "${#filtered[@]}" -gt 0 ]; then set -- "${filtered[@]}"; else set --; fi
+
 main "$@"
+

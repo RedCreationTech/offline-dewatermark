@@ -11,9 +11,15 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from hashlib import sha256
 from time import perf_counter
-from zoneinfo import ZoneInfo
 
 import numpy as np
+
+try:
+    from zoneinfo import ZoneInfo
+    _SHANGHAI = ZoneInfo('Asia/Shanghai')
+except Exception:  # Windows 无系统时区库且未装 tzdata 时，用固定 UTC+8（上海自 1991 年起无夏令时）
+    from datetime import timedelta, timezone
+    _SHANGHAI = timezone(timedelta(hours=8), 'Asia/Shanghai')
 
 from . import masks, recall, repair, verdict
 from .contract import EngineKind, MaskLayer, MaskSource, PageResult, Thresholds
@@ -132,7 +138,7 @@ def apply_proposal(result: PageResult, proposal: StrokeProposal) -> PageResult:
     processing = deepcopy(result.processing)
     history = processing.setdefault('human_assistance', [])
     history.append(dict(rectangle=list(proposal.rectangle),
-                        confirmed_at=datetime.now(ZoneInfo('Asia/Shanghai')).isoformat(timespec='seconds'),
+                        confirmed_at=datetime.now(_SHANGHAI).isoformat(timespec='seconds'),
                         base_output_sha256=proposal.base_hash,
                         candidate_sha256=sha256(selected.tobytes()).hexdigest(),
                         selected_pixels=int(selected.sum()), changed_pixels=int(changed.sum()),

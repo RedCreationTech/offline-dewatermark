@@ -1,6 +1,6 @@
 # 项目认知文档（knowme）
 
-> 版本：V1.4（2026-11-02）
+> 版本：V1.5（2026-11-06，增补 GPU 支持现状实测记录；代码走读仍截至 2026-10-30）
 > 依据：对截至 2026-10-30 最新提交源码的完整走读（`wm/` 44 个模块、约 9.4k 行，`tools/` 97 个脚本，`tests/` 40 个测试文件）
 > 读者：刚拿到代码的新手。读完本文应能回答四个问题：**项目架构是什么样、用了什么技术、核心逻辑怎么跑、如何编译运行**。
 > 关系：本文是项目认知文档的唯一当前入口；2026-10-26 的根目录初版 C4 说明已作为重复历史副本删除。
@@ -124,7 +124,7 @@ C4Component
 | 数值与图像 | numpy 2.5.4、opencv-python 5.0.0.93、scikit-image、scipy、pillow | 检测与修复主体，纯 CPU 可跑 |
 | PDF | pymupdf 1.28.2（lock 为 2.0）、pypdf 6.21.2 | 渲染、遍历、结构对象操作（AGPL 许可，闭源交付需评估替换） |
 | 桌面 GUI | PySide6 6.12.0（Qt for Python） | 窗口、画布、QThread 工作线程；无桌面环境用 `QT_QPA_PLATFORM=offscreen` |
-| 深度学习修复 | onnxruntime 1.31.0 + huggingface_hub | LaMa ONNX（~93MB，opencv/inpainting_lama），**不需要 torch**；`WM_LAMA_CUDA=1` 预留 GPU |
+| 深度学习修复 | onnxruntime 1.31.0 + huggingface_hub | LaMa ONNX（~93MB，opencv/inpainting_lama），**不需要 torch**；`WM_LAMA_CUDA=1` 预留 GPU，但该量化模型 GPU 实测受限，详见文末 2026-11-06 记录 |
 | OCR | rapidocr-onnxruntime | 模型 ~8MB 随 wheel 打包，离线可用；缺失时检测走保守阈值 |
 | 评测协议 | 自研四条件判定（verdict.py） | 非通用库，口径见 §3.6 |
 | 构建系统 | 无（解释型语言） | "编译" = 建 venv + 装依赖；`start.sh` 一键封装 |
@@ -278,6 +278,7 @@ cd offline-dewatermark
 | 生成合成评测集（带真值，可自证） | `.venv/bin/python -m wm.cli synth --out out/generated_fixtures/synthetic` → `fixtures` → `eval`（种子固定，逐像素可复现） |
 | 不依赖中文字体的端到端自测 | `.venv/bin/python -m wm.e2e_test --out out/e2e_ort` |
 | 查看最近一次报告路径 | `./start.sh report` |
+| GPU 实验（WeVisOne 探针） | `./start.sh wevisone --gpu [提示词] [图片]`（或 `start.bat wevisone --gpu`，默认 cpu）；任意子命令后加 `--gpu`；LaMa 现状见文末 2026-11-06 实测记录 |
 
 桌面程序要点：批次独立保存参数；同批按尺寸分组算跨页先验；结果/原图/选区/拖拽对比四视图；暂停继续停止在代码检查点生效。左侧显示最近一轮整批的已处理/总张数、运行失败数、总用时与平均每张，暂停时间不计入，单张重处理不覆盖本轮统计。导出按批次分目录（结果 + 选区叠加 + 黑白选区 + 强度图 + npz + manifest + 复核 HTML）。
 
@@ -351,3 +352,26 @@ offline-dewatermark-ai/
 ## 2026-11-02 资源 Release 复制
 
 数据、模型和三个配套说明／校验文件已复制至 [本仓库资源 Release](https://github.com/RedCreationTech/offline-dewatermark/releases/tag/resources-2026-10-27)，原 Release 保留。六个附件仍是原始快照，校验值不变；原始清单中的旧提交号由资源说明解释其映射，不重新打包、不恢复退役样本。详细下载与校验见 [资源放置说明](../资源放置说明.md)。
+
+## 2026-11-06 GPU 支持现状实测记录（LaMa 保持 CPU，后续再启用）
+
+> 实测机：Windows + NVIDIA GeForce RTX 3060 Ti（8GB）+ 驱动 560.94 + Python 3.14.10。目的：为换机与新人提供 GPU 能力的真实边界，避免重复踩坑。
+
+**结论**：现网 LaMa 量化模型（`models/inpainting_lama_2025jan.onnx`，OpenCV int8 量化产物）在本机只能在 CPU 运行；WeVisOne-VL-2B 视觉模型已可在 GPU 正常运行。`--gpu` 标志因此做成智能生效：WeVisOne 恒走 `cuda:0`；LaMa 仅当主环境探测到可用的 CUDA 提供程序时才设 `WM_LAMA_CUDA=1`，否则保持 CPU 并打印提示。
+
+**实测证据（GPU 跑 LaMa 的四条路径全部不通）**：
+
+| 路径 | 结果 |
+|---|---|
+| onnxruntime-gpu 1.27 / 1.29 / 1.30 / 1.31 | 均要求 CUDA 13 运行库（`cublasLt64_13.dll`）；PyPI 无对应 nvidia pip 包（`nvidia-cublas-cu13` 等只有 0.0.1 占位空包）；且 CUDA 13 需驱动 ≥ 580，本机 560.94 不满足 |
+| onnxruntime-gpu 1.25 / 1.26（CUDA 12 + cuDNN 9） | CUDA 运行库可借用 PyTorch cu128 自带 DLL 补齐，CUDA 会话能建立；但模型推理报 `DequantizeLinear ... Unsupported quantization type`——CUDA EP 缺该量化算子实现 |
+| onnxruntime-directml 1.24.4（Windows 原生 GPU） | DirectML 会话能建立；但模型 FFC 结构的 `MatMul` 报"参数错误"，算子不支持 |
+| 升级驱动 + CUDA 13 + ORT 1.31 | 未执行（系统级改动 + 数 GB 下载）；即使完成，量化算子在 CUDA 13 上的可用性仍需重新实测，不保证 |
+
+**当前状态与口径**：
+
+- 主环境依赖维持 `requirements.lock` 钉死的 onnxruntime 1.31.0（CPU 版），smoke 与固定集校验复测通过；交互场景 LaMa CPU 约 3.4s/512² 瓦片，可接受。
+- `--gpu` 现成入口：`start.bat wevisone --gpu [提示词] [图片]`（WeVisOne-VL-2B，cuda:0 + bf16，单图数秒，输出 `out/WeVisOne环境检查_NN`）；`start.bat gui --gpu` 中 LaMa 自动保持 CPU。
+- WeVisOne 的 GPU 环境为独立 venv（`out/third_party/WeVisOne-VL/.venv`，torch 2.11.0+cu128，与主环境隔离）。
+
+**后续启用 LaMa GPU 的条件**：升级驱动 ≥ 580 并安装 CUDA 13 运行时后，重新实测 CUDA 13 版 onnxruntime-gpu 对该量化模型的算子支持；或另行评估导出 FP32/非量化 LaMa 并走完整防退化验证。未验证前不得宣称 LaMa GPU 可用，也不得把 `--gpu` 下 LaMa 的 CPU 回退当作性能结论。
