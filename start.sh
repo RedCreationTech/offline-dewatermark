@@ -3,8 +3,10 @@
 # 用法：
 #   ./start.sh              等价于 ./start.sh test
 #   ./start.sh setup        只装环境（磁盘预检 + venv + 依赖 + LaMa 模型 + 字体检查）
-#   ./start.sh test         按修改影响选择日常检查；--plan 只预览范围和耗时
-#   ./start.sh test-release 工程预检后完整三模式对照，供版本放行
+#   ./start.sh test         日常测试（自动判断检查层级）
+#   ./start.sh test --plan  预览检查范围和耗时
+#   ./start.sh test --quick 快速验证（固定 48 页核心集）
+#   ./start.sh test --full  完整放行检查（全部样本 + 无水印负例）
 #   ./start.sh freeze-baseline 冻结当前代码、资源、参数并运行，建立首次观察基线
 #   ./start.sh control-inventory 校验全部应用输入、参考和既有固定集
 #   ./start.sh control ...  防退化控制工具（resume/compare/promote 等）
@@ -12,8 +14,11 @@
 #   ./start.sh gui [文件]   启动桌面前端
 #   ./start.sh wevisone [--gpu] [query] [image]  单图分割探针（默认 cpu，--gpu 走 cuda:0）
 #   任意子命令后加 --gpu    LaMa 走 WM_LAMA_CUDA=1，WeVisOne 走 cuda:0
-#   ./start.sh eval         仅跑固定核心回归集
-#   ./start.sh report       显示最近一次最小回归报告路径
+#   ./start.sh report       显示最近一次测试报告路径
+#
+# 已废弃（仍可用但会提示）：
+#   ./start.sh eval         → 改用 ./start.sh test --quick
+#   ./start.sh test-release → 改用 ./start.sh test --full
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -145,14 +150,33 @@ cmd_setup() {
 }
 
 cmd_eval() {
+    warn "已废弃：./start.sh eval → 改用 ./start.sh test --quick"
     say "固定核心回归：36 个输入文件 / 48 张或页"
     HF_HUB_OFFLINE=1 "$VENV_PY" tools/run_min_regression.py --suite core
 }
 
 cmd_test() {
     shift || true
-    say "日常按影响分层检查；局部通过不能更新默认基线"
-    HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/daily_check.py "$@"
+    local args=("$@")
+    local quick=false full=false
+
+    for arg in "${args[@]}"; do
+        case "$arg" in
+            --quick) quick=true ;;
+            --full) full=true ;;
+        esac
+    done
+
+    if $quick; then
+        say "快速验证：固定 48 页核心集"
+        HF_HUB_OFFLINE=1 "$VENV_PY" tools/run_min_regression.py --suite core
+    elif $full; then
+        say "完整放行检查：全部样本 + 无水印负例"
+        HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/daily_check.py --level full "${args[@]/--full/}"
+    else
+        say "日常按影响分层检查；局部通过不能更新默认基线"
+        HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/daily_check.py "$@"
+    fi
 }
 
 cmd_report() {
@@ -178,7 +202,7 @@ main() {
         setup)  cmd_setup ;;
         eval)   cmd_setup; cmd_eval ;;
         test)   cmd_test "$@" ;;
-        test-release) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/daily_check.py "$@" --level full ;;
+        test-release) warn "已废弃：./start.sh test-release → 改用 ./start.sh test --full"; shift; cmd_test --full "$@" ;;
         freeze-baseline) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/regression_control.py freeze "$@" ;;
         control-inventory) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/regression_control.py inventory "$@" ;;
         control) shift; HF_HUB_OFFLINE=1 QT_QPA_PLATFORM=offscreen "$VENV_PY" tools/regression_control.py "$@" ;;
@@ -189,8 +213,9 @@ main() {
             HF_HUB_OFFLINE=1 "$WVPY" out/试跑_wevisone.py "$WV_DEVICE" "$@" ;;
         report) cmd_report ;;
         check-data) "$VENV_PY" tools/run_min_regression.py --validate-only ;;
+        synth)  shift; "$VENV_PY" -m wm.synth "$@" ;;
         gui)    cmd_setup; cmd_gui "$@" ;;
-        *) die "未知子命令：${sub}（可用：setup/check-data/eval/test/test-release/freeze-baseline/control-inventory/control/report/gui/wevisone）" ;;
+        *) die "未知子命令：${sub}（可用：setup/check-data/eval/test/test-release/freeze-baseline/control-inventory/control/report/gui/wevisone/synth）" ;;
     esac
 }
 # --gpu 标志（可出现在任意位置）：LaMa 走 WM_LAMA_CUDA=1，WeVisOne 用 cuda:0

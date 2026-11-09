@@ -29,7 +29,7 @@ from tools.regression_layers import jobs_for, selected_cases
 from tools.regression_retirements import load_profile, project_baseline
 
 STATE = ROOT / '.regression-control/baseline.json'
-POLICY = ROOT / 'config/regression_control.json'
+POLICY = ROOT / 'config/regression.json'
 
 
 def stamp():
@@ -103,8 +103,7 @@ def prepare(out, inventory, scope, selection_plan=None):
     for name in ('control_worker.py',):
         shutil.copyfile(ROOT / 'tools' / name, snapshot / 'tools' / name)
     for path in (POLICY, ROOT / 'start.sh', ROOT / 'AGENTS.md', ROOT / 'README.md',
-                 ROOT / 'requirements.txt', ROOT / 'requirements.lock', ROOT / 'config/regression_tiers.json',
-                 ROOT / 'config/regression_retirements.json'):
+                 ROOT / 'requirements.txt', ROOT / 'requirements.lock'):
         if path.is_file():
             dest = snapshot / path.relative_to(ROOT)
             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +288,7 @@ def execute(out):
                 count = len(load(file)) if file.exists() else 0
                 if count > last_count:
                     progress, last_count = time.monotonic(), count
-                if time.monotonic() - progress > policy['page_timeout_seconds']:
+                if time.monotonic() - progress > policy['control']['page_timeout_seconds']:
                     proc.terminate()
                     try:
                         proc.wait(timeout=5)
@@ -345,9 +344,9 @@ def verified_run(out):
 
 
 def write_report(out, run, old=None, gate=None):
-    (out / '项目防退化控制报告.html').write_text(content, encoding='utf-8')
-    # 固定模板明细报告（tab/搜索，本地逐张核查）为正式逐张产物；
-    # 上方旧版逐张报告一并保留（兼容既有引用），两者只新增文件、不改封存件；失败不阻断主流程。
+    # 固定模板明细报告（tab/搜索，本地逐张核查）。
+    # 旧版《项目防退化控制报告.html》与摘要报告已退役：明细报告覆盖其全部用途。
+    # 只新增文件、不改封存件；失败不阻断主流程。
     try:
         if not run.get('complete'):
             # 运行未封存前，报告只是过程工作文件：先删旧版再重写，
@@ -364,14 +363,15 @@ def compare(candidate, baseline, out, reviews=None):
     new, old = verified_run(candidate), verified_run(baseline)
     scope_revision = None
     if new['inventory_sha256'] != old['inventory_sha256']:
+        merged_config = load(candidate / '代码快照/config/regression.json')
         old, _ = project_baseline(old, load(baseline / '原始清单.json'),
-            load_profile(candidate / '代码快照/config/regression_retirements.json'), digest(baseline / '封存校验.json'))
+            merged_config.get('retirements'), digest(baseline / '封存校验.json'))
         scope_revision = old.get('sample_scope_revision')
     policy = load(candidate / '验收规则.json')
     if new.get('selection_plan'):
         if new['selection_plan'].get('baseline_seal') != digest(baseline / '封存校验.json'):
             raise ValueError('局部计划绑定的基线与本次比较不一致')
-        rules = load(candidate / '代码快照/config/regression_tiers.json')
+        rules = load(candidate / '代码快照/config/regression.json')['tiers']
         result = compare_subset(new, old, policy, load(candidate / '原始清单.json'), rules)
     else:
         result = compare_runs(new, old, policy)

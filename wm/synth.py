@@ -117,9 +117,33 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font, width: int, max_lines: int
     return lines
 
 
-def render_clean_page(rng: random.Random, dpi: int, page_index: int) -> np.ndarray:
-    """A4 page rendered at dpi, mostly white with text, dotted table lines,
-    a photo-texture block and a reddish seal."""
+def render_clean_page(rng: random.Random, dpi: int, page_index: int,
+                      bg_type: str = "document") -> np.ndarray:
+    """A4 page rendered at dpi.
+
+    bg_type:
+      - "white":    plain white page (minimal content)
+      - "photo":    photo-like texture (gradient + noise, no text)
+      - "document": full document with text, tables, seal, photo block (default)
+    """
+    scale = dpi / 72.0
+    w = int(round(8.27 * scale * 72))
+    h = int(round(11.69 * scale * 72))
+
+    if bg_type == "white":
+        return np.full((h, w, 3), 255, dtype=np.uint8)
+
+    if bg_type == "photo":
+        grad = np.tile(np.linspace(80, 200, w, dtype=np.float32), (h, 1))
+        noise = np.array([rng.randint(0, 50) for _ in range(h * w)], dtype=np.float32).reshape(h, w)
+        grad += noise
+        photo = np.repeat(grad[..., None], 3, axis=2)
+        photo = np.clip(photo, 0, 255).astype(np.uint8)
+        img = Image.fromarray(photo)
+        img = img.filter(ImageFilter.GaussianBlur(2.0))
+        return np.asarray(img)
+
+    # bg_type == "document" (full document with text, tables, seal, photo block)
     scale = dpi / 72.0
     w = int(round(8.27 * scale * 72))
     h = int(round(11.69 * scale * 72))
@@ -195,6 +219,10 @@ def render_clean_page(rng: random.Random, dpi: int, page_index: int) -> np.ndarr
     return np.asarray(img)
 
 
+OPACITY_FACTORS = {"low": 0.5, "medium": 1.0, "high": 1.5}
+BG_TYPES = ("white", "photo", "document")
+
+
 def _text_alpha(shape, text: str, font_px: int, spacing_x: int, spacing_y: int,
                 angle: float, rng: random.Random,
                 anchor: tuple[int, int] | None = None) -> np.ndarray:
@@ -229,8 +257,12 @@ def _dot_alpha(shape, period: int, radius: float, rng: random.Random,
 
 
 def make_watermark(shape, style: str, dpi: int, page_index: int,
-                   rng: random.Random) -> tuple[np.ndarray, np.ndarray, float]:
-    """Return (alpha_map, watermark_rgb_color, strength)."""
+                   rng: random.Random,
+                   opacity_factor: float = 1.0) -> tuple[np.ndarray, np.ndarray, float]:
+    """Return (alpha_map, watermark_rgb_color, strength).
+
+    opacity_factor scales the base strength: low=0.5, medium=1.0, high=1.5.
+    """
     scale = dpi / 200.0
     if style == "tiled_text":
         alpha = _text_alpha(shape, "内部资料 CONF-2026", int(20 * scale), int(340 * scale),
@@ -258,7 +290,8 @@ def make_watermark(shape, style: str, dpi: int, page_index: int,
         strength = 0.8
     else:
         raise ValueError(f"unknown style {style}")
-    return alpha.astype(np.float32), color.astype(np.float32), strength
+    adjusted_strength = float(np.clip(strength * opacity_factor, 0.05, 0.95))
+    return alpha.astype(np.float32), color.astype(np.float32), adjusted_strength
 
 
 def apply_watermark(clean: np.ndarray, alpha: np.ndarray, color: np.ndarray,
@@ -319,3 +352,128 @@ def generate_dataset(root: str | Path, docs: int = 3, pages_per_doc: int = 6,
     }
     (root / "dataset.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
     return root
+
+
+def generate_stratified_dataset(root: str | Path, dpi: int = 200,
+                                styles: tuple[str, ...] = WATERMARK_STYLES,
+                                opacity_levels: tuple[str, ...] = ("low", "medium", "high"),
+                                bg_types: tuple[str, ...] = BG_TYPES,
+                                jpeg_q: int = 0, noise: int = 0,
+                                seed: int = 20261019) -> Path:
+    """Generate a stratified test set: styles × opacity × bg_type.
+
+    Default: 5 styles × 3 opacity × 3 bg_types = 45 samples.
+    Each sample has a unique combination, with ground truth (clean, alpha, color, strength).
+    """
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    index: list[dict] = []
+    rng = random.Random(seed)
+    sample_id = 0
+
+    for style in styles:
+        for opacity_name in opacity_levels:
+            opacity_factor = OPACITY_FACTORS[opacity_name]
+            for bg_type in bg_types:
+                clean = render_clean_page(rng, dpi, sample_id, bg_type=bg_type)
+                alpha, color, strength = make_watermark(
+                    clean.shape, style, dpi, sample_id, rng, opacity_factor=opacity_factor
+                )
+                watermarked = apply_watermark(clean, alpha, color, strength)
+                if jpeg_q or noise:
+                    watermarked = degrade(watermarked, rng, jpeg_q, noise)
+
+                sid = f"s{sample_id:03d}_{style}_{opacity_name}_{bg_type}"
+                np.savez_compressed(
+                    root / f"{sid}_gt.npz",
+                    clean=clean, alpha=alpha, color=color,
+                    strength=np.float32(strength),
+                )
+                Image.fromarray(watermarked).save(root / f"{sid}.png")
+                index.append({
+                    "sample_id": sid, "style": style,
+                    "opacity_level": opacity_name, "opacity_factor": opacity_factor,
+                    "bg_type": bg_type, "strength": round(strength, 3),
+                    "dpi": dpi, "degraded": bool(jpeg_q or noise),
+                })
+                sample_id += 1
+
+    meta = {
+        "type": "stratified",
+        "seed": seed, "dpi": dpi,
+        "styles": list(styles),
+        "opacity_levels": {name: OPACITY_FACTORS[name] for name in opacity_levels},
+        "bg_types": list(bg_types),
+        "jpeg_q": jpeg_q, "noise": noise,
+        "total_samples": sample_id,
+        "note": "分层测试集：样式 × 透明度 × 底图类型全组合，用于能力边界评估",
+        "samples": index,
+    }
+    (root / "dataset.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), "utf-8")
+    return root
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(
+        description="合成水印测试集生成器",
+        epilog=f"可用样式：{', '.join(WATERMARK_STYLES)}；底图类型：{', '.join(BG_TYPES)}",
+    )
+    ap.add_argument("--out", type=Path, default=Path("out/合成测试集"),
+                    help="输出目录（默认：out/合成测试集）")
+    ap.add_argument("--stratified", action="store_true",
+                    help="生成分层测试集（样式 × 透明度 × 底图类型全组合）")
+    ap.add_argument("--docs", type=int, default=3,
+                    help="文档数量，每种样式至少一个文档（默认：3，仅非分层模式）")
+    ap.add_argument("--pages", type=int, default=6,
+                    help="每文档页数（默认：6，仅非分层模式）")
+    ap.add_argument("--dpi", type=int, default=200,
+                    help="渲染 DPI（默认：200）")
+    ap.add_argument("--styles", nargs="+", default=list(WATERMARK_STYLES),
+                    choices=WATERMARK_STYLES,
+                    help="使用的水印样式列表（默认：全部 5 种）")
+    ap.add_argument("--opacity-levels", nargs="+", default=["low", "medium", "high"],
+                    choices=list(OPACITY_FACTORS.keys()),
+                    help="透明度档位（默认：low medium high，仅分层模式）")
+    ap.add_argument("--bg-types", nargs="+", default=list(BG_TYPES),
+                    choices=BG_TYPES,
+                    help="底图类型（默认：white photo document，仅分层模式）")
+    ap.add_argument("--jpeg-q", type=int, default=0,
+                    help="JPEG 压缩质量，0 = 不压缩（默认：0）")
+    ap.add_argument("--noise", type=int, default=0,
+                    help="高斯噪声幅度，0 = 不加噪（默认：0）")
+    ap.add_argument("--seed", type=int, default=20261019,
+                    help="随机种子（默认：20261019）")
+    args = ap.parse_args()
+
+    if args.stratified:
+        n_styles = len(args.styles)
+        n_opacity = len(args.opacity_levels)
+        n_bg = len(args.bg_types)
+        total = n_styles * n_opacity * n_bg
+        result = generate_stratified_dataset(
+            root=args.out,
+            dpi=args.dpi,
+            styles=tuple(args.styles),
+            opacity_levels=tuple(args.opacity_levels),
+            bg_types=tuple(args.bg_types),
+            jpeg_q=args.jpeg_q,
+            noise=args.noise,
+            seed=args.seed,
+        )
+        print(f"已生成分层测试集：{n_styles} 样式 × {n_opacity} 透明度 × {n_bg} 底图 = {total} 个样本")
+    else:
+        result = generate_dataset(
+            root=args.out,
+            docs=args.docs,
+            pages_per_doc=args.pages,
+            dpi=args.dpi,
+            styles=tuple(args.styles),
+            jpeg_q=args.jpeg_q,
+            noise=args.noise,
+            seed=args.seed,
+        )
+        print(f"已生成 {args.docs} 个文档 × {args.pages} 页 = {args.docs * args.pages} 个样本")
+    print(f"输出目录：{result}")
+    print(f"元数据：{result / 'dataset.json'}")

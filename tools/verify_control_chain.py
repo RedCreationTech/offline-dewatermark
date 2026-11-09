@@ -24,8 +24,8 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     source = out / '自检空白输入.png'
     Image.new('RGB', (128, 128), 'white').save(source)
-    rules = load(ROOT / 'config/regression_tiers.json')
-    names = list(dict.fromkeys(rules['protection_seeds'] + rules['targeted_mode_probes'] + rules['cross_mode_probes']))
+    rules = load(ROOT / 'config/regression.json')['tiers']
+    names = list(dict.fromkeys(rules['protection_seeds'] + rules['cross_extra_seeds']))
     # IDs mirror the selection contract only; every input here is the same blank fixture.
     records = [dict(id=name, input=str(source), input_sha256=digest(source),
                   batch='工具自检' if name != 'control_fixture_extra' else '未选中夹具批次',

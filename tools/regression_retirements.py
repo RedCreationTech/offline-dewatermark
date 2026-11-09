@@ -7,11 +7,14 @@ from pathlib import Path
 
 from tools.regression_guard import canonical
 
-PROFILE = Path(__file__).resolve().parents[1] / 'config/regression_retirements.json'
+PROFILE = Path(__file__).resolve().parents[1] / 'config/regression.json'
 
 
 def load_profile(path=PROFILE):
-    return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else None
+    if not path.is_file():
+        return None
+    config = json.loads(path.read_text(encoding='utf-8'))
+    return config.get('retirements')
 
 
 def project_baseline(run, inventory, profile, baseline_seal):

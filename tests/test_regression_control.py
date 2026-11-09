@@ -9,7 +9,7 @@ from tools.regression_guard import apply_reviews, compare_page, compare_runs
 from tools.regression_control import save, seal, verified_run, verify_frozen
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY = json.loads((ROOT / 'config/regression_control.json').read_text(encoding='utf-8'))
+POLICY = json.loads((ROOT / 'config/regression.json').read_text(encoding='utf-8'))['control']
 
 
 def page(key='desktop:sample:1'):

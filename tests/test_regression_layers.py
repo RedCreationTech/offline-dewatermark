@@ -13,8 +13,9 @@ from tools.regression_guard import apply_reviews, compare_subset
 from tools.regression_layers import changed_files, expand_batches, jobs_for, make_plan, minimum_level
 
 ROOT = Path(__file__).resolve().parents[1]
-RULES = json.loads((ROOT / 'config/regression_tiers.json').read_text(encoding='utf-8'))
-POLICY = json.loads((ROOT / 'config/regression_control.json').read_text(encoding='utf-8'))
+CONFIG = json.loads((ROOT / 'config/regression.json').read_text(encoding='utf-8'))
+RULES = CONFIG['tiers']
+POLICY = CONFIG['control']
 
 
 def fixture():
@@ -68,7 +69,11 @@ class LayerTests(unittest.TestCase):
                 plan = dict(level='full', files=['README.md'], page_mode_count=3,
                             mode_case_ids={'desktop': ['fixture']}, estimated_seconds=30, reasons=[])
                 def mocked_load(path):
-                    return {'path': str(directory / 'baseline'), 'seal': 'sealed'} if path == state else {}
+                    if path == state:
+                        return {'path': str(directory / 'baseline'), 'seal': 'sealed'}
+                    if str(path).endswith('regression.json'):
+                        return CONFIG
+                    return {}
                 stack.enter_context(patch.object(daily_check, 'STATE', state))
                 stack.enter_context(patch.object(daily_check, 'load_profile', return_value=None))
                 stack.enter_context(patch.object(daily_check, 'load', side_effect=mocked_load))

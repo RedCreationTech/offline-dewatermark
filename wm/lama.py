@@ -427,8 +427,26 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
         # veils keep the conservative dark guard instead of trusting the fit.
         apply_dark_guard = (mask.repair_mode != "document_overlay_full"
                             or float(np.min(mask.veil_strength)) < 0.4)
+        # For document_overlay_full with heavy veils, the dark guard clamps
+        # text-overlap pixels to min(unmixed, original), which preserves the
+        # watermark color where it overlaps dark text. For pixels inside OCR
+        # keepout zones with non-trivial watermark coverage, skip the dark guard
+        # and let LaMa reconstruct the underlying text instead. The threshold
+        # is low (0.2) because the measured alpha inside keepout zones is
+        # attenuated by the text stroke itself (repeated.py:237).
+        lama_candidate = np.zeros(out.shape[:2], dtype=bool)
+        heavy_veil_full = (mask.repair_mode == "document_overlay_full"
+                           and float(np.min(mask.veil_strength)) < 0.4)
+        if heavy_veil_full and mask.text_keepout is not None:
+            high_alpha_keepout = mask.text_keepout & (mask.alpha >= 0.2) & mask.footprint
+            if high_alpha_keepout.any():
+                lama_candidate |= high_alpha_keepout
         if apply_dark_guard:
             dark = (img.mean(2) < covered*.8) & (mask.alpha > 0)
+            # Exclude heavy-veil keepout pixels from the dark guard so LaMa
+            # can reconstruct them instead of clamping to the watermark color.
+            if lama_candidate.any():
+                dark &= ~lama_candidate
             out[dark] = np.minimum(out[dark], img[dark])
         # A fitted white-paper overlay is invertible. Do not ask an inpainter
         # to redraw text or table rules we can preserve algebraically.
@@ -463,7 +481,14 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
         # Numerical alpha can retain a faint tail outside the selected strokes.
         # The measured inverse still needs the explicit repair permission mask.
         out[~mask.footprint] = img[~mask.footprint]
-        return out, [RepairName.ALPHA_UNMIX]
+        # Run LaMa on heavy-veil keepout pixels excluded from the dark guard,
+        # so the inpainter reconstructs the underlying text rather than the
+        # clamped watermark color.
+        if lama_candidate.any() and lama_candidate.mean() < 0.25:
+            out = inpaint(out, lama_candidate, thr)
+            used.append(RepairName.LAMA)
+        used.append(RepairName.ALPHA_UNMIX)
+        return out, used
 
     if mask.repair_mode in ("inpaint", "photo_overlay"):
         region = mask.footprint if mask.footprint is not None else mask.binary(thr.mask_alpha_min) > 0

@@ -235,7 +235,7 @@ def publish(out):
         (out/'本轮问题逐图明细_20261029.json','三模式全部问题记录（去重后698条）'),
         (out/'原始批次记录索引_20261029.json','保留范围全部1269条批次索引'),
         (ROOT/'out/完整基线效果总览_20261029_V1/去水印效果分档总览_20261029.html','三档效果页（可切换模式与问题档）'),
-        (base/'运行记录.json','原始封存运行记录'),(ROOT/'config/regression_retirements.json','三张手写样本移除记录')]
+        (base/'运行记录.json','原始封存运行记录'),(ROOT/'config/regression.json','回归配置（含三张手写样本移除记录）')]
     summary_rows=[[MODES[m],v['positive_pages'],v['counts'].get('good',0),v['counts'].get('review',0),v['counts'].get('poor',0),f"{v['negative_unsafe']} / {v['negative_pages']}",v['outside_selection_pages']]for m,v in data['stats'].items()]
     direct=[['最终选区为空，输出未变',reason.get('unchanged',0),'定位未提供修复权限；空选区不能评价修复模型。'],
       ['有改动，水印区误差未改善',reason.get('not_improved',0),'漏选、误选及重建差异需要分开核对。'],

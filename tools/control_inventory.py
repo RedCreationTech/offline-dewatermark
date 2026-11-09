@@ -15,13 +15,16 @@ def read_rows(path):
 
 
 def build_inventory(project: Path, inputs: Path) -> dict:
-    cases, covered = [], set()
+    cases, covered, skipped = [], set(), set()
     source = json.loads((inputs / '输入来源与校验.json').read_text())
     catalogs = {}
     for name in ('watermark_training_v1', 'watermark_training_increment_v1_1'):
         root = project / 'data' / name
         for row in read_rows(root / 'manifest.jsonl'):
             catalogs[row['id']] = (root, row)
+
+    # 全局去重：跟踪已添加的 base_id+style 组合
+    added_combos = set()
 
     def add(key, path, *, batch, group, style, negative=False, pages=1, refs=None,
             dpi=200, source_group=None, split_group=None, base_id=None, split=None, label=None):
@@ -31,6 +34,15 @@ def build_inventory(project: Path, inputs: Path) -> dict:
         refs = refs or [{} for _ in range(pages)]
         if len(refs) != pages:
             raise ValueError(f'参考页数不一致：{key}')
+        
+        # 去重检查：跳过已添加的 base_id+style 组合（负例除外）
+        if not negative and base_id:
+            combo = (base_id, style)
+            if combo in added_combos:
+                skipped.add(path)  # 记录跳过的文件
+                return False  # 跳过重复
+            added_combos.add(combo)
+        
         row = dict(id=key, input=str(path), input_sha256=digest(path), batch=batch,
                    group=group, style=style, label=label or style, negative=negative,
                    page_count=pages, dpi=dpi, source_group=source_group,
@@ -39,6 +51,7 @@ def build_inventory(project: Path, inputs: Path) -> dict:
         row['reference_identity'] = canonical(refs)
         cases.append(row)
         covered.add(path)
+        return True
 
     def reference(clean, alpha=None):
         result = {'clean': str(Path(clean).resolve()), 'clean_sha256': digest(clean)}
@@ -95,14 +108,20 @@ def build_inventory(project: Path, inputs: Path) -> dict:
             source_group=row['source_group'], split=row['original_split'], label=row['label'])
 
     extras = [str(p.relative_to(inputs)) for p in inputs.rglob('*')
-              if p.suffix.lower() in MEDIA and p.resolve() not in covered]
+              if p.suffix.lower() in MEDIA and p.resolve() not in covered and p.resolve() not in skipped]
     if extras:
         raise ValueError(f'存在未登记的输入或参考，必须先分类：{extras}')
     if len({r['id'] for r in cases}) != len(cases):
         raise ValueError('输入场景 ID 重复')
+    
+    # 统计去重情况
+    total_combos = len(added_combos)
+    
     return dict(schema_version=1, input_root=str(inputs.resolve()), cases=cases,
                 groups=dict(Counter(r['group'] for r in cases)),
                 total_inputs=len(cases), total_pages=sum(r['page_count'] for r in cases),
                 unique_input_hashes=len({r['input_sha256'] for r in cases}),
+                unique_base_style_combos=total_combos,
+                skipped_duplicates=len(skipped),
                 independent_validation=False,
-                note='重复文件保留其不同批次场景；参考只供处理后评分。历史与已查看样本均不能证明独立泛化。')
+                note=f'已全局去重（base_id+style组合），保留{len(cases)}个唯一场景，跳过{len(skipped)}个重复。负例和无base_id样本不参与去重。历史与已查看样本不能证明独立泛化。')

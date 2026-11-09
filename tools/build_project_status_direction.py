@@ -151,7 +151,7 @@ def main():
 <li>效果数字：out/项目防退化控制/20261104_002213_219680_freeze/ 明细报告（2026-11-04 16:00 版）。</li>
 <li>样式与样本覆盖：docs/水印分类样本与最新测试.html、data/应用测试输入 清单。</li>
 <li>极淡候选边界：docs/极淡水印方案与适用边界讨论_20261104.md。</li>
-<li>管控口径：AGENTS.md 第 7、9 节，config/regression_control.json。</li>
+<li>管控口径：AGENTS.md 第 7、9 节，config/regression.json。</li>
 </ul>
 """
 

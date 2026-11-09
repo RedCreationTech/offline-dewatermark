@@ -167,7 +167,7 @@ def render(f, date):
         ('wm/', '软件本身', 'app.py 是桌面入口；batches.py 负责队列；masks.py 定位；repair.py / lama.py 修复；pipeline.py 串联与输出。'),
         ('tests/', '程序行为检查', '覆盖选区边界、PDF、修复路由、导出、界面和回归管控；不能代替实际图片验收。'),
         ('tools/', '测试、维护、研究和报告脚本', '下表按用途列出；没有删除、移动或擅自接入默认应用。'),
-        ('config/', '固定门槛与范围规则', 'regression_control.json、regression_tiers.json、regression_retirements.json；整理说明不改变规则。'),
+        ('config/', '固定门槛与范围规则', 'regression.json（合并了原三个独立配置）；整理说明不改变规则。'),
         ('data/', '输入、原始来源与评分参考', '图片输入与干净参考分开；参考只能在推理后评分时使用。'),
         ('out/', '运行产物与历史证据', '每轮新目录，封存结果原位保留。'),
         ('proposal/', '方案材料与可维护源文件', '有多轮 Word / PPT 产物，目前未纳入 Git；通过报告总目录进入。'),
@@ -181,7 +181,7 @@ def render(f, date):
     data = page('数据集清单与清理', [
         ('sets', '当前只有三套工作数据', inventory_note+count_table+'<p>数据名称中的“训练”表示准备用途，不表示已完成模型训练。固定集和应用批次存在来源重叠，不能把各项直接相加为独立样本数。</p>'),
         ('paths', '输入和答案在哪里', table(['位置', '用途'], [(link('../data/dataset_registry.json','数据登记表'), '当前数量与用途，由实际清单更新。'), (link('../data/watermark_training_v1/manifest.jsonl','基础清单'), '按图片／PDF 文档记录；保留原 train、validation、test 划分。'), (link('../data/watermark_training_increment_v1_1/training_tasks.jsonl','129 条统一任务清单'), '严格、近似、检测专用分开；原 121 条 manifest 继续兼容。'), (link('../data/watermark_regression_min_v1/manifest.jsonl','固定回归清单'), '当前 '+str(c['fixed_inputs'])+' 个输入。inputs/ 交给程序；references/ 只供处理后评分。')])+'<p>原始收件、授权记录、应用测试批次、网站参照和历史输出分别保留，不能因目录里仍有历史素材就算入当前固定集。</p>'),
-        ('retired', '已经退役和移除的范围', '<p>旧 real_samples、syn、公开 40 对样本及配套旧格式已经退役。应用测试输入里的历史来源副本仍按批次保留，不代表恢复旧默认入口。</p><p>10 月 29 日仅从固定回归和当前效果页移除 real_001、real_002、real_004；原始采集、训练来源和历史封存继续按用途保留。'+link('../config/regression_retirements.json','查看授权范围与哈希')+'。范围变化不算质量提升。</p><p>'+link('数据集清单与清理_历史20261026.html','查看 10 月 26 日历史清理说明')+'；历史清理收据记录当时状态，不能据此承诺目前还能从废纸篓恢复。</p>'),
+        ('retired', '已经退役和移除的范围', '<p>旧 real_samples、syn、公开 40 对样本及配套旧格式已经退役。应用测试输入里的历史来源副本仍按批次保留，不代表恢复旧默认入口。</p><p>10 月 29 日仅从固定回归和当前效果页移除 real_001、real_002、real_004；原始采集、训练来源和历史封存继续按用途保留。'+link('../config/regression.json','查看回归配置（含移除授权与哈希）')+'。范围变化不算质量提升。</p><p>'+link('数据集清单与清理_历史20261026.html','查看 10 月 26 日历史清理说明')+'；历史清理收据记录当时状态，不能据此承诺目前还能从废纸篓恢复。</p>'),
         ('check', '怎样检查', '<pre>./start.sh check-data\n./start.sh control-inventory\n./start.sh test --plan\n./start.sh test</pre><p>check-data 只验证固定文件和清单；test 按实际修改选择范围；发布用 test-release。当前独立泛化验证尚未成立。</p>')], date)
     case_rows = [(escape(r['case_id']),escape(r.get('label') or r['subtype']),str(r['page_count']), '无水印对照' if r['negative'] else escape(r['score_mode']),link('../data/watermark_regression_min_v1/'+r['paths']['input'],'输入')) for r in f['fixed']]
     fixed = page('最小回归测试集', [
@@ -236,7 +236,7 @@ def registry_and_readmes(f, date):
         key,unit,desc=detail[item['id']]; item.update(count=c[key],unit=unit,detail=desc)
         item['bytes']=sum(p.stat().st_size for p in (ROOT/item['path']).rglob('*') if p.is_file())
         item['bytes_note']='当前目录文件字节总和，包含说明和派生资料；不是独立样本量。'
-        if item['id']=='regression_min': item.update(pages=c['fixed_pages'],retirement_profile='config/regression_retirements.json')
+        if item['id']=='regression_min': item.update(pages=c['fixed_pages'],retirement_profile='config/regression.json')
     registry['count_sources']={name:value for name,value in f['source_sha256'].items()}
     # 独立验证集 v1：2026-11-02 建成，一次性基线后锁柜；存在不等于任何算法已通过泛化验证。
     ind_root=ROOT/'data/watermark_independent_v1'

@@ -235,9 +235,11 @@ def baseline_card():
     body = f'<h2><a href="{href(entry)}">完整观察基线 {date}｜{entry_label}</a></h2><p class="state">{state} · {date} · 北京时间</p>'
     if overview.exists():
         body += '<p>新增三档效果总览：效果较好、一般／待复核、问题较多。可查看实际原图与输出；分档仅为自动初筛。</p>'
-        removal = ROOT / 'config/regression_retirements.json'
-        if removal.exists():
-            body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
+        removal_config = ROOT / 'config/regression.json'
+        if removal_config.exists():
+            config = json.loads(removal_config.read_text(encoding='utf-8'))
+            if config.get('retirements'):
+                body += '<p>按用户要求移除3张手写样本后，当前效果页与后续回归为395个输入／423页／1,269页次；下列1,278页次是原始封存范围。样本变更不代表算法效果提升。</p>'
     if len(modes) > 1:
         mode_bits = '、'.join(f'{mode_label_legacy.get(m, m)} {n}' for m, n in sorted(modes.items())) + ' 页次'
     else:

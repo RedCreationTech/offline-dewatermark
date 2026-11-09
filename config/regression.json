@@ -1,0 +1,134 @@
+{
+  "schema_version": 2,
+  "description": "回归测试统一配置：防退化规则、分层检查、样本移除记录。2026-11-09 合并原三个独立配置文件。",
+  "changelog": [
+    {
+      "date": "2026-11-09",
+      "change": "合并 regression_control.json、regression_tiers.json、regression_retirements.json 为单一文件"
+    },
+    {
+      "date": "2026-11-03",
+      "change": "口径变更：回归只保留桌面默认一种模式；原跨模式探针并入桌面默认的固定保护样本"
+    },
+    {
+      "date": "2026-10-29",
+      "change": "用户要求移除 3 张手写样本（real_001/002/004）"
+    },
+    {
+      "date": "2026-10-28",
+      "change": "预先固定逐张防退化规则"
+    }
+  ],
+
+  "control": {
+    "required_modes": ["desktop"],
+    "page_timeout_seconds": 240,
+    "limits": {
+      "recall_drop": 0.01,
+      "strong_recall_drop": 0.01,
+      "precision_drop": 0.01,
+      "false_positive_increase_pixels": 0,
+      "hole_selected_increase_pixels": 0,
+      "background_mae_increase": 0.05,
+      "watermark_mae_increase": 0.5,
+      "elapsed_increase_ratio": 0.5,
+      "elapsed_increase_ms": 2000,
+      "time_budget_ms": 120000
+    },
+    "changed_output_requires_review": true,
+    "route_change_requires_review": true,
+    "no_reference_policy": "任何输出、选区或路径变化都待复核；没有标注的质量指标保持 null",
+    "independent_validation": false
+  },
+
+  "tiers": {
+    "version": "分层检查V2_20261103",
+    "purpose": "日常按影响范围检查；局部检查不得用于更新默认基线。原有数值退化门槛不变。2026-11-03 起回归只保留桌面默认一种模式；原跨模式探针并入桌面默认的固定保护样本。",
+    "levels": ["static", "unit", "targeted", "cross", "full"],
+    "cross_files": [
+      "wm/app.py", "wm/batches.py", "wm/cli.py", "wm/contract.py",
+      "wm/documents.py", "wm/lama.py", "wm/masks.py", "wm/recall.py",
+      "wm/ocr.py", "wm/pipeline.py", "wm/repair.py", "wm/structure.py",
+      "wm/styles.py", "wm/verdict.py", "wm/contrast_text.py"
+    ],
+    "unit_files": [
+      "wm/viewer.py", "wm/export_review.py", "wm/assisted.py",
+      "wm/assist_worker.py", "wm/synth.py", "wm/fixtures.py", "wm/e2e_test.py"
+    ],
+    "target_styles": {
+      "wm/paper_grid.py": ["dot_grid", "line_net"],
+      "wm/periodic.py": ["dot_grid", "line_net", "tiled_diagonal"],
+      "wm/corner_id.py": ["tiny_corner", "timestamp", "website"],
+      "wm/paper_repeat.py": ["tiled_diagonal", "tiled_irregular", "heavy_dark", "center_white"],
+      "wm/repeated.py": ["tiled_diagonal", "tiled_irregular", "cropped_edge"],
+      "wm/document_overlay.py": ["center_text", "center_white", "heavy_dark", "mixed_color"],
+      "wm/chromatic.py": ["center_text", "mixed_color"],
+      "wm/stroke_colour.py": ["center_text", "center_white", "heavy_dark", "mixed_color"],
+      "wm/photo_repeat_inverse.py": ["tiled_diagonal", "tiled_irregular"],
+      "wm/photo_overlay.py": ["center_text", "local_text", "shadow"],
+      "wm/photo_text.py": ["center_text", "local_text", "tiled_diagonal", "shadow"],
+      "wm/photo_observations.py": ["local_text", "tiled_irregular", "shadow"],
+      "wm/observed_text.py": ["local_text", "center_white", "tiled_irregular", "shadow"],
+      "wm/texture_overlay.py": ["tiled_diagonal", "center_text"],
+      "wm/pdf_text.py": ["independent_text", "unicode_text", "shared_content_stream", "outlined_text", "nested_form", "optional_content"],
+      "wm/pdf_images.py": ["independent_image", "nested_form", "mixed_storage"]
+    },
+    "protection_seeds": [
+      "固定回归/core_007", "固定回归/core_011", "固定回归/core_015",
+      "固定回归/core_023", "固定回归/core_024", "固定回归/core_025",
+      "固定回归/core_028", "固定回归/core_036"
+    ],
+    "cross_extra_seeds": [
+      "固定回归/core_023", "固定回归/core_025",
+      "01_快速20张/04_非等距密集文字/inc11_cat_lowlight__tiled_irregular.png"
+    ],
+    "batch_context": "选择某张图片时，必须连同原基线批次全部成员一起运行；不得缩小同尺寸先验组后直接比较。",
+    "protection_note": "保护样本是固定能力哨兵，不等于已经人工确认效果满意；新增满意图和失败图可通过 --cases 增补，不能移除固定保护样本。",
+    "release_note": "大范围算法调整、模型或默认参数变更、准备更新默认版本，必须另跑完整检查；局部通过不能 promote。"
+  },
+
+  "retirements": {
+    "version": "手写样本移除V1_20261029",
+    "reason": "用户明确要求删除'真实手写前后照'和'红色手写批注'样本",
+    "authorized_by": "2026-10-29 当前会话用户请求",
+    "baseline_seal": "50bb13d0127a0747b9ae0eb5c0fb7fba749ee30f759498c11ee3a51dc9411bd9",
+    "source_manifest_sha256": "4412857d259d8dfe37e506d34669b48ad7e29127a293fc9899530ab28057b354",
+    "archive": "out/样本移除留档/20261029_101653_143257_手写样本",
+    "cases": [
+      {
+        "case_id": "real_001",
+        "inventory_id": "固定回归/real_001",
+        "label": "真实手写前后照",
+        "input_sha256": "2c8858a24debf82bc0572c7cccde087e9d4d4b7119fcb2ee6f34c71707d319cd",
+        "paths": {
+          "input": "inputs/real/real_001.png",
+          "original_clean": "references/real_001/original_clean.png",
+          "aligned_clean": "references/real_001/aligned_clean.png",
+          "annotation": "references/real_001/annotation.json"
+        }
+      },
+      {
+        "case_id": "real_002",
+        "inventory_id": "固定回归/real_002",
+        "label": "真实手写前后照",
+        "input_sha256": "b6476971903559bafcaf8b1bdc652e429f82e908924b30b3e69dcd5ba516223f",
+        "paths": {
+          "input": "inputs/real/real_002.png",
+          "original_clean": "references/real_002/original_clean.png",
+          "aligned_clean": "references/real_002/aligned_clean.png",
+          "annotation": "references/real_002/annotation.json"
+        }
+      },
+      {
+        "case_id": "real_004",
+        "inventory_id": "固定回归/real_004",
+        "label": "红色手写批注",
+        "input_sha256": "94dd9bd7f900eaf67017184af0b203cd7f34fb0e23ff15b8db5a0d172785b7b1",
+        "paths": {
+          "input": "inputs/real/real_004.png"
+        }
+      }
+    ],
+    "active_manifest_sha256": "40dcafe9279b26a092d2baf99d92fc0c1ea4a7105904117511cb4ff0d2dd4f42"
+  }
+}

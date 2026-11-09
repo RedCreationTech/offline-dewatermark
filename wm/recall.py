@@ -163,8 +163,17 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
             return unconfirmed
         combined, inverse, alpha_map, colour_map = repeat_alignment.complete_and_invert(image, region, peaks)
         if combined is not None and inverse is not None and inverse.any():
+            # Check if the measured opacity needs significant clipping. If so, the
+            # inverse model is unreliable and inpainting gives better results.
+            raw_opacity = np.where(inverse, alpha_map, 0)
+            clipped = np.clip(raw_opacity, 0, 0.6).astype(np.float32)
+            if (raw_opacity > 0.6).sum() > inverse.sum() * 0.3:
+                # More than 30% of pixels exceed the valid range; fall back to inpaint.
+                return replace(mask, alpha=combined.astype(np.float32), footprint=combined,
+                               method='recall_repeated_strokes', repair_mode='inpaint',
+                               overlay_opacity=None, veil_colour_map=None)
             layer = observed_text._layer(combined, 'recall_repeated_strokes')
-            layer.overlay_opacity = np.where(inverse, alpha_map, 0)
+            layer.overlay_opacity = clipped
             layer.veil_colour_map = colour_map
             layer.repair_mode = 'photo_repeat_inverse'
             return layer
