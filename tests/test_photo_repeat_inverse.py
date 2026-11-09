@@ -69,6 +69,32 @@ class PhotoRepeatInverseTests(unittest.TestCase):
             lama.repair_with_lama(image, mask, Thresholds())
         fake.assert_called_once()
 
+    def test_unmeasured_confirmed_strokes_fall_back_to_neural_inpaint(self):
+        # 选区内未能实测反解的确认笔画必须补完，不能只留反解核心。
+        image = np.full((64, 80, 3), 90, np.uint8)
+        region = np.zeros((64, 80), bool)
+        region[10:50, 10:70] = True
+        opacity = np.zeros((64, 80), np.float32)
+        opacity[20:40, 30:50] = .15  # 实测反解核心
+        mask = MaskLayer(region.astype(np.float32), footprint=region,
+                         overlay_opacity=opacity, veil_strength=np.zeros(3),
+                         veil_offset=np.array([40, 75, 140]),
+                         repair_mode='photo_repeat_inverse')
+        with patch('wm.lama.inpaint', return_value=image.copy()) as fake:
+            output, used = lama.repair_with_lama(image, mask, Thresholds())
+        self.assertEqual(used, [lama.RepairName.ALPHA_UNMIX, lama.RepairName.LAMA])
+        np.testing.assert_array_equal(fake.call_args.args[1], region & ~(opacity > 0))
+        # 全部实测时不再额外补图，行为与原来一致。
+        mask2 = MaskLayer(region.astype(np.float32), footprint=region,
+                          overlay_opacity=region.astype(np.float32) * .15,
+                          veil_strength=np.zeros(3),
+                          veil_offset=np.array([40, 75, 140]),
+                          repair_mode='photo_repeat_inverse')
+        with patch('wm.lama.inpaint', return_value=image.copy()) as fake2:
+            _, used2 = lama.repair_with_lama(image, mask2, Thresholds())
+        fake2.assert_not_called()
+        self.assertEqual(used2, [lama.RepairName.ALPHA_UNMIX])
+
     def test_export_uses_physical_opacity_not_binary_selection(self):
         opacity = np.full((4, 5), .15, np.float32)
         mask = MaskLayer(np.ones((4, 5), np.float32), overlay_opacity=opacity,

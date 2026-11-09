@@ -383,7 +383,18 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
         raw = (img.astype(np.float32) - alpha * colour) / denom
         out = np.clip(np.rint(raw), 0, 255).astype(np.uint8)
         out[~mask.footprint] = img[~mask.footprint]
-        return out, [RepairName.ALPHA_UNMIX]
+        used = [RepairName.ALPHA_UNMIX]
+        # 选区内未能实测拟合出模型的确认笔画不能留在图上：反解只写实测像素，
+        # 其余按已确认选区交给本地补图模型保守修复（与未实测区域的既有口径一致）。
+        region = (mask.footprint if mask.footprint is not None
+                  else mask.binary(thr.mask_alpha_min) > 0)
+        leftover = region & ~(mask.overlay_opacity > 0)
+        if leftover.any():
+            log.info('重复照片反解覆盖 %d/%d 像素，其余 %d 像素退回 LaMa 补图',
+                     int((mask.overlay_opacity > 0).sum()), int(region.sum()), int(leftover.sum()))
+            out = inpaint(out, leftover, thr)
+            used.append(RepairName.LAMA)
+        return out, used
 
     if mask.repair_mode == 'texture_overlay':
         out = _alpha_unmix(img, mask)
