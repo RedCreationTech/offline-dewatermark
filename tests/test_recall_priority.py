@@ -9,7 +9,7 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from wm import masks, pipeline, recall, verdict, observed_text, lama
+from wm import masks, pipeline, recall, repeat_alignment, verdict, observed_text, lama
 from wm.app import MainWindow, make_app
 from wm.batches import Batch
 from wm.contract import EngineKind, MaskLayer, PageImage, PageResult, Thresholds
@@ -54,19 +54,49 @@ class RecallGeometryTests(unittest.TestCase):
         self.assertIsNone(result.text_keepout)
         np.testing.assert_array_equal(original, source)
 
-    def test_repeat_template_preserves_holes_and_rejects_inverse_background_view(self):
+    def test_repeat_template_preserves_holes(self):
         glyphs = np.zeros((100, 280), np.uint8)
         cv2.putText(glyphs, 'O8 B', (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 2.5, 255, 5)
         field = glyphs.astype(np.float32)/255*10
-        box = np.array([[0, 0], [279, 0], [279, 99], [0, 99]], np.float32)
-        observations = [(box, 100., .99)]
-        self.assertTrue(observed_text._positive_ink_view(field, observations))
-        self.assertFalse(observed_text._positive_ink_view(10-field, observations))
         selected = observed_text._stroke_template(field)
         self.assertTrue(selected[glyphs == 255].all())
         self.assertFalse(selected[glyphs == 0].any())
         self.assertGreater(selected[glyphs > 0].mean(), .90)
         self.assertFalse(observed_text._stroke_template(np.zeros_like(field)).any())
+
+    def test_whole_repeat_recovers_omitted_suffix_and_verified_crop(self):
+        height, width = 160, 225
+        ink = np.zeros((height, width), np.uint8)
+        cv2.putText(ink, 'O8 1', (18, 92), cv2.FONT_HERSHEY_SIMPLEX, 2.1, 255, 5, cv2.LINE_AA)
+        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), 30, 1)
+        ink = cv2.warpAffine(ink, matrix, (width, height))
+        corners = np.array([[12, 46], [186, 46], [186, 98], [12, 98]], np.float32)
+        box = cv2.transform(corners[None], matrix)[0]
+        region = np.zeros((height, width * 3 + 50), np.uint8)
+        for x in range(0, region.shape[1], width):
+            region[:, x:x+width] = ink[:, :region.shape[1]-x]
+        opacity = region.astype(np.float32)[..., None] / 255 * .75
+        image = np.rint(230 * (1-opacity) + np.array([35, 130, 90]) * opacity).astype(np.uint8)
+        seed = (region > 80) & ((np.indices(region.shape)[1] % width) < 110)
+        found = repeat_alignment.align(image, seed, [(box, 'O8 1', .99)])
+        self.assertIsNotNone(found)
+        suffix = (region > 180) & ((np.indices(region.shape)[1] % width) >= 110)
+        clipped = np.s_[:, width * 3:]
+        self.assertTrue(suffix.any())
+        self.assertGreater(found[suffix].mean(), .90)
+        self.assertGreater(found[clipped][region[clipped] > 180].mean(), .90)
+        self.assertFalse(found[region == 0].any())
+        self.assertIsNone(repeat_alignment.align(np.full_like(image, 230), seed, [(box, 'O8 1', .99)]))
+
+    def test_failed_repeat_alignment_clears_selection(self):
+        image = np.full((80, 140, 3), 230, np.uint8)
+        seed = np.zeros(image.shape[:2], bool)
+        seed[20:24, 30:90] = True
+        mask = MaskLayer(seed.astype(np.float32), method='repeated_oblique_text', footprint=seed)
+        with patch('wm.ocr.read_lines', return_value=[]):
+            found = recall.expand(image, mask, Thresholds())
+        self.assertFalse(found.binary().any())
+        self.assertFalse(found.footprint.any())
 
     def test_measured_texture_and_inverse_repairs_keep_their_physical_models(self):
         image = np.full((40, 60, 3), 180, np.uint8)

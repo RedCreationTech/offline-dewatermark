@@ -55,7 +55,56 @@ def write_daily_report(out, plan, result):
     label = {'static': '文档与链接', 'unit': '工程检查', 'targeted': '定向回归', 'cross': '跨样式回归', 'full': '完整放行检查'}[plan['level']]
     rows = ''.join(f'<tr><td>{escape(r["file"])}</td><td>{escape(r["level"])}</td><td>{escape(r["reason"])}</td></tr>' for r in plan['reasons'])
     comparison = f'<p><a href="{escape(result["comparison"], quote=True)}">逐张对照与检查结论</a></p>' if result.get('comparison') else ''
-    report = f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>分层防退化检查 · {label}</title><style>body{{font:15px/1.8 system-ui;max-width:1100px;margin:30px auto;padding:25px;color:#243d33;background:#f3f6f3}}table{{width:100%;border-collapse:collapse;background:white}}td,th{{padding:10px;border-bottom:1px solid #ddd;text-align:left;overflow-wrap:anywhere}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:white;padding:18px}}a{{color:#176a4d}}</style><h1>分层防退化检查 · {label}</h1><p>本轮范围 {plan['page_mode_count']} 页次，估算 {plan['estimated_seconds']} 秒；估算来自旧基线，不是速度承诺。</p><p><strong>只有完整三模式门槛通过才具备放行资格；日常局部通过不能更新默认基线。</strong>原有数值门槛未改变，原观察基线继续复用。</p><h2>本轮结果</h2><pre>{escape(json.dumps(result,ensure_ascii=False,indent=2))}</pre>{comparison}<h2>为何选择这一级</h2><table><thead><tr><th>文件</th><th>最低检查层</th><th>原因</th></tr></thead><tbody>{rows}</tbody></table><p><a href="分层检查计划.json">固定检查计划与样本范围</a> · <a href="分层检查结果.json">结构化结果</a></p></html>'''
+    report = f'''<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>分层防退化检查 · {label}</title>
+<style>
+:root{{--ink:#213b34;--muted:#62716d;--line:#dce4df;--bg:#f4f6f4;--good:#176c4d;--review:#91621e;--poor:#aa443f}}
+*{{box-sizing:border-box}}
+body{{margin:0;background:var(--bg);color:var(--ink);font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}}
+.shell{{max-width:1380px;margin:auto;padding:32px 30px 60px}}
+a{{color:#176c4d;text-underline-offset:3px}}
+h1{{font-size:31px;line-height:1.35;margin:17px 0 9px}}
+.byline{{font-size:13px;color:var(--muted);margin:0}}
+.intro{{max-width:1000px;color:var(--muted);margin:14px 0 20px}}
+.notice{{padding:12px 16px;border-left:3px solid #bb8f4a;background:#fffaf0;font-size:13px;margin:18px 0}}
+.section{{background:white;border:1px solid var(--line);border-radius:11px;padding:24px;margin:24px 0}}
+.section>h2{{font-size:22px;margin:0 0 16px;color:var(--good)}}
+table{{width:100%;border-collapse:collapse;background:white}}
+td,th{{padding:10px;border-bottom:1px solid #ddd;text-align:left;overflow-wrap:anywhere}}
+pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:white;padding:18px;font-size:13px}}
+.status{{display:inline-block;padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600}}
+.status-pass{{background:#e6f4ea;color:#176c4d}}
+.status-fail{{background:#fde7e9;color:#aa443f}}
+.status-review{{background:#fff3e0;color:#91621e}}
+</style></head>
+<body>
+<div class="shell">
+<div class="byline">分层防退化检查 · {escape(label)}</div>
+<h1>分层防退化检查 · {escape(label)}</h1>
+<p class="intro">本轮范围 {plan['page_mode_count']} 页次，估算 {plan['estimated_seconds']} 秒；估算来自旧基线，不是速度承诺。</p>
+
+<div class="notice">
+<strong>只有完整三模式门槛通过才具备放行资格；日常局部通过不能更新默认基线。</strong><br>
+原有数值门槛未改变，原观察基线继续复用。
+</div>
+
+<div class="section">
+<h2>本轮结果</h2>
+<p><span class="status {'status-pass' if result.get('check_passed') else 'status-fail'}">{'通过' if result.get('check_passed') else '未通过'}</span></p>
+<pre>{escape(json.dumps(result,ensure_ascii=False,indent=2))}</pre>
+{comparison}
+</div>
+
+<div class="section">
+<h2>为何选择这一级</h2>
+<table><thead><tr><th>文件</th><th>最低检查层</th><th>原因</th></tr></thead><tbody>{rows}</tbody></table>
+</div>
+
+<p style="color:var(--muted);font-size:13px;margin-top:32px">
+<a href="分层检查计划.json">固定检查计划与样本范围</a> · <a href="分层检查结果.json">结构化结果</a>
+</p>
+</div>
+</body></html>'''
     (out / '分层防退化检查报告.html').write_text(report)
 
 

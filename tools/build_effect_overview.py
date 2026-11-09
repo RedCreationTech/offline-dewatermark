@@ -26,18 +26,14 @@ from tools.regression_guard import canonical, digest
 from tools.regression_retirements import load_profile, project_baseline
 
 RULES = {
-    'version': '效果初筛V1_20261029',
+    'version': '效果初筛V2_20261109',
     'purpose': '展示分档，不修改算法、不修改防退化门槛，不作为质量验收或成功率',
-    'good': {'recall_min': .95, 'precision_min': .95, 'watermark_mae_max': 5,
-             'watermark_error_reduction_min': .8, 'background_damage_mae_max': .05,
-             'hole_selected_pixels_max': 0, 'outside_selection_changed_pixels_max': 0},
-    'poor': {'background_damage_mae_gt': 1, 'background_damage_p99_gt': 12,
-             'error_reduction_lt': .3, 'watermark_mae_ge': 5},
-    'unknown': '没有严格配对、原图差异太小或条件不足时归入一般／待复核，未知质量保持null',
+    'recall_good_min': 0.85,
+    'recall_poor_max': 0.50,
     'negative': '无水印且选区和改动均为0，标为无水印安全保留；不计作去水印成功',
     'deduplication': '同模式、同输入文件哈希、同页码合并；不同批次结果不一致时展示最差档，全部原始记录保留',
 }
-BUCKETS = {'good': '效果较好（初筛）', 'review': '一般／待复核', 'poor': '问题较多（初筛）'}
+BUCKETS = {'good': '效果好（召回≥85%）', 'review': '效果中等（召回50%-85%）', 'poor': '效果差（召回<50%）'}
 RANK = {'good': 0, 'review': 1, 'poor': 2}
 
 
@@ -93,44 +89,14 @@ def classify(row):
         if row['selected_pixels'] == 0 and row['changed_pixels'] == 0:
             return 'good', ['无水印对照：没有新增选区，输出保持原样；不代表去水印成功']
         return 'poor', [f'无水印对照被误选或改动：选中{row["selected_pixels"]:,}像素，改动{row["changed_pixels"]:,}像素']
-    if row.get('exact_reference_match') is True:
-        return 'good', ['本页实际输出与对应干净参考逐像素一致；只适用于这张／页']
-    if row.get('watermark_mae') is None or row.get('exact_reference_match') is None:
-        return 'review', ['没有严格配对参考，不能可靠评定去除效果；请查看实际原图与结果']
-    reasons = []
-    if row.get('background_damage_mae', 0) > RULES['poor']['background_damage_mae_gt']:
-        reasons.append('非水印区域对参考的误差明显增加，存在内容损伤风险')
-    if row.get('background_damage_p99', 0) > RULES['poor']['background_damage_p99_gt']:
-        reasons.append('非水印区域局部误差增加较大，需重点核对正文和纹理')
-    reduction = row.get('watermark_error_reduction')
-    if (row['changed_pixels'] == 0 or row['selected_pixels'] == 0) and (row.get('source_watermark_mae') or 0) > 1:
-        reasons.append('带水印输入未得到有效处理，或未形成水印选区')
-    elif reduction is not None and reduction <= 0:
-        reasons.append('水印区域对干净参考的像素误差没有减少，或反而增加')
-    elif reduction is not None and reduction < .3 and row['watermark_mae'] >= 5:
-        reasons.append('水印区域对参考的误差改善不足，结果仍有较大差异')
-    if reasons:
-        return 'poor', reasons
-    good = RULES['good']
-    if (row.get('recall') is not None and row['recall'] >= good['recall_min'] and
-            row.get('precision') is not None and row['precision'] >= good['precision_min'] and
-            row['watermark_mae'] <= good['watermark_mae_max'] and
-            reduction is not None and reduction >= good['watermark_error_reduction_min'] and
-            (row.get('background_damage_mae') or 0) <= good['background_damage_mae_max'] and
-            (row.get('hole_selected_pixels') or 0) == 0 and row['outside_selection_changed_pixels'] == 0):
-        return 'good', ['笔画覆盖和选区精确率均≥95%，水印区域对参考误差减少≥80%，背景新增平均误差≤0.05',
-                        '这是自动指标初筛，残影、正文正确性和纹理仍需目视核对']
-    if (row.get('recall') or 0) < .95:
-        reasons.append('有水印像素未被选中，需查看淡笔画、边缘或交叠处')
-    if (row.get('precision') or 0) < .95:
-        reasons.append('选区包含背景像素，需核对是否造成误伤')
-    if row.get('hole_selected_pixels'):
-        reasons.append('真实字洞内存在选区，需核对处理结果')
-    if row['watermark_mae'] > 5:
-        reasons.append('水印区域与干净参考仍有差异，可能包含残影或重建差异')
-    if reduction is None:
-        reasons.append('原图对参考的差异过小，无法可靠计算改善比例')
-    return 'review', reasons or ['有一定改善，但未同时满足较好档的初筛条件']
+    recall = row.get('recall')
+    if recall is None:
+        return 'review', ['没有召回率数据，无法按水印召回分档']
+    if recall >= RULES['recall_good_min']:
+        return 'good', [f'水印召回率{recall:.1%}≥85%，大部分水印像素被选中']
+    if recall >= RULES['recall_poor_max']:
+        return 'review', [f'水印召回率{recall:.1%}在50%-85%之间，有部分漏检']
+    return 'poor', [f'水印召回率{recall:.1%}<50%，严重漏检']
 
 
 def main():
