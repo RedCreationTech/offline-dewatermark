@@ -266,9 +266,9 @@ class SelectionDesktopTests(unittest.TestCase):
         self.assertGreater(overlay.pixelColor(35, 35).alpha(), 0)
         self.assertGreater(overlay.pixelColor(100, 80).alpha(), 0)
         self.assertEqual(overlay.pixelColor(55, 50).alpha(), 0)
-        w.page_list.setCurrentRow(1)
+        w._select_page(1)
         self.assertIsNone(w._selection_edit)
-        w.page_list.setCurrentRow(0); w.assist_select_btn.click()
+        w._select_page(0); w.assist_select_btn.click()
         self.assertFalse(w._selection_edit.selected[80, 100])
 
     def test_brush_undo_redo_and_zoom_do_not_change_pixel_diameter(self):
@@ -308,7 +308,7 @@ class SelectionDesktopTests(unittest.TestCase):
             w.assist_confirm_btn.click(); self.wait_job()
         self.assertIsNone(w._selection_edit)
         np.testing.assert_array_equal(w.batch.results[0].mask.binary() > 0, wanted)
-        w.page_list.setCurrentRow(1); w.page_list.setCurrentRow(0)
+        w._select_page(1); w._select_page(0)
         w.set_view_mode('水印选区')
         self.assertGreater(w.canvas._overlay.toImage().pixelColor(100, 80).alpha(), 0)
         w.assist_undo_btn.click()

@@ -15,13 +15,14 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QLocale, QTranslator, QLibraryInfo, QTimer, QThread, Signal
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QColor, QCursor, QBrush
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QListWidget, QListWidgetItem,
     QMainWindow, QProgressBar, QPushButton, QSlider, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget, QInputDialog, QMessageBox,
     QAbstractItemView, QScrollArea, QButtonGroup, QSpinBox, QLineEdit,
+    QTreeWidget, QTreeWidgetItem,
 )
 
 from . import documents, pipeline
@@ -218,8 +219,12 @@ class MainWindow(QMainWindow):
         self.wevisone = wevisone_client.Service()
         self._warm_thread: _ServiceWarmThread | None = None
 
-        self.page_list = QListWidget()
-        self.page_list.currentRowChanged.connect(self.show_page)
+        self.page_list = QTreeWidget()
+        self.page_list.setHeaderHidden(True)
+        self.page_list.setRootIsDecorated(True)
+        self.page_list.currentItemChanged.connect(self._page_tree_current_changed)
+        self.page_list.itemClicked.connect(self._page_tree_item_clicked)
+        self._page_items: dict[int, QTreeWidgetItem] = {}
         self.canvas = ImageViewer()
         self.canvas.rectangleFinished.connect(self.find_assisted_strokes)
         self.canvas.brushStarted.connect(self._begin_brush_stroke)
@@ -249,7 +254,8 @@ class MainWindow(QMainWindow):
             view_layout.addWidget(button)
             self.view_buttons[mode] = button
         self.open_btn = QPushButton("＋ 新增批次")
-        self.open_btn.clicked.connect(self.open_file)
+        # clicked 信号会携带 checked=False；直连 open_file 会把 False 当成文件路径。
+        self.open_btn.clicked.connect(lambda: self.open_file())
         self.run_btn = QPushButton("自动处理全部批次")
         # clicked 信号会携带 checked=False；直连 start_run 会被 only_page 收到，
         # 误入「重处理当前页」分支（self.pages[False] 即第 0 页）。必须用 lambda 隔参数。
@@ -733,13 +739,12 @@ class MainWindow(QMainWindow):
             self.batch.prompt_treatment if self.batch else "strokes")))
         self._loading_params = False
         self._update_mode_controls()
-        self.page_list.clear()
-        if self.batch:
-            for i, page in enumerate(self.pages):
-                self.page_list.addItem(self._page_item(i))
+        self._rebuild_page_tree()
         self.refresh_batch_timing()
-        self.page_list.setCurrentRow(0)
-        self.show_page(0 if self.pages else -1)
+        if self.pages:
+            self._select_page(0)
+        else:
+            self.show_page(-1)
         self.set_busy(bool(self.worker and self.worker.isRunning()))
 
     def rename_batch(self) -> None:
@@ -796,13 +801,65 @@ class MainWindow(QMainWindow):
         self.batch_list.setCurrentRow(row)
         self.batch_list.blockSignals(False)
 
+    def _ask_import_mode(self, title: str) -> str | None:
+        """询问导入方式：返回 "files"（多选文件）或 "dir"（整个文件夹），取消返回 None。"""
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setIcon(QMessageBox.Question)
+        box.setText("选择导入方式：")
+        box.setInformativeText("选文件夹会导入该文件夹及所有子文件夹里的图片和文档（按子目录分层展示）；"
+                               "同批次图片的水印样式与位置应一致。")
+        file_button = box.addButton("选择图片或文档", QMessageBox.AcceptRole)
+        dir_button = box.addButton("选择文件夹（含子文件夹）", QMessageBox.AcceptRole)
+        box.addButton(QMessageBox.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is file_button:
+            return "files"
+        if clicked is dir_button:
+            return "dir"
+        return None
+
+    def _pick_import_files(self, title: str) -> tuple[list[Path], Path, str | None] | None:
+        """按用户选择收集导入文件，返回 (文件列表, 相对目录根, 批次名标签)。
+        目录模式标签为目录名；文件模式标签为 None（用首个文件名）。取消或无文件时返回 None。"""
+        mode = self._ask_import_mode(title)
+        if mode is None:
+            return None
+        root: Path
+        label: str | None = None
+        if mode == "dir":
+            chosen = QFileDialog.getExistingDirectory(
+                self, f"{title}：选择文件夹（导入其中所有子文件夹的图片和文档）", "data",
+                QFileDialog.ShowDirsOnly | QFileDialog.DontUseNativeDialog)
+            if not chosen:
+                return None
+            root = Path(chosen)
+            files = documents.collect_import_files(root)
+            if not files:
+                QMessageBox.warning(self, "导入失败", "所选文件夹及其子文件夹中没有可处理的图片或文档。")
+                return None
+            label = root.name
+        else:
+            picked = QFileDialog.getOpenFileNames(
+                self, f"{title}：选择水印相同的图片或文档", "data", OPEN_FILTER,
+                options=QFileDialog.DontUseNativeDialog)[0]
+            if not picked:
+                return None
+            files = [Path(f) for f in picked]
+            root = documents.common_root(files)
+        return files, root, label
+
     def open_file(self, path: str | Path | None = None) -> None:
         if self.worker and self.worker.isRunning():
             return
-        files = [str(path)] if path else QFileDialog.getOpenFileNames(
-            self, "新增批次：选择水印相同的图片或文档", "data", OPEN_FILTER, options=QFileDialog.DontUseNativeDialog)[0]
-        if not files:
-            return
+        if path:
+            files, root, label = [Path(path)], documents.common_root([path]), None
+        else:
+            picked = self._pick_import_files("新增批次")
+            if picked is None:
+                return
+            files, root, label = picked
         try:
             pages = documents.load_many(files)
             if not pages:
@@ -811,8 +868,9 @@ class MainWindow(QMainWindow):
             logging.getLogger(__name__).exception("文件操作失败")
             QMessageBox.warning(self, "导入失败", "无法读取所选文件，请检查文件格式、内容或访问权限。")
             return
+        documents.assign_relative_dirs(pages, root)
         self._serial += 1
-        batch = Batch(f"批次 {self._serial} · {Path(files[0]).stem}", pages)
+        batch = Batch(f"批次 {self._serial} · {label or Path(files[0]).stem}", pages)
         batch.params = {attr: _knob_default(attr) for attr in self._sliders}
         self.batches.append(batch)
         self.refresh_batches()
@@ -824,15 +882,17 @@ class MainWindow(QMainWindow):
     def append_files(self) -> None:
         if not self.batch or (self.worker and self.worker.isRunning()):
             return
-        files = QFileDialog.getOpenFileNames(self, "添加到当前批次", "data", OPEN_FILTER, options=QFileDialog.DontUseNativeDialog)[0]
-        if not files:
+        picked = self._pick_import_files("添加到当前批次")
+        if picked is None:
             return
+        files, root, _label = picked
         try:
             pages = documents.load_many(files)
         except Exception:
             logging.getLogger(__name__).exception("文件操作失败")
             QMessageBox.warning(self, "导入失败", "无法读取所选文件，请检查文件格式、内容或访问权限。")
             return
+        documents.assign_relative_dirs(pages, root)
         for page in pages:
             page.page_index = len(self.batch.pages)
             self.batch.pages.append(page)
@@ -1095,11 +1155,13 @@ class MainWindow(QMainWindow):
     def _refresh_assisted_page(self, index):
         self.results = list(self.batch.results.values())
         self.refresh_batches()
-        item = self.page_list.item(index)
+        item = self._page_items.get(index)
+        if item is None:
+            return
         replacement = self._page_item(index)
-        item.setText(replacement.text())
-        item.setToolTip(replacement.toolTip())
-        item.setForeground(replacement.foreground())
+        item.setText(0, replacement.text(0))
+        item.setToolTip(0, replacement.toolTip(0))
+        item.setForeground(0, replacement.foreground(0))
         self.show_page(index)
 
     def undo_assisted_repair(self):
@@ -1226,11 +1288,12 @@ class MainWindow(QMainWindow):
         self.refresh_batches()
         if batch is self.batch:
             self.results = list(batch.results.values())
-            item = self.page_list.item(index)
-            replacement = self._page_item(index)
-            item.setText(replacement.text())
-            item.setToolTip(replacement.toolTip())
-            item.setForeground(replacement.foreground())
+            item = self._page_items.get(index)
+            if item is not None:
+                replacement = self._page_item(index)
+                item.setText(0, replacement.text(0))
+                item.setToolTip(0, replacement.toolTip(0))
+                item.setForeground(0, replacement.foreground(0))
             if self._current == index:
                 self.show_page(index)
 
@@ -1402,16 +1465,88 @@ class MainWindow(QMainWindow):
         # 同一文档（多页 PDF）展开成多条时，文字上直接带页码区分；
         # page_index 被 load_many 按批次全局重编，这里按同文档内的
         # 导入顺序重新计算"第 N 页"（相对所属文件，从 1 开始）。
-        same_doc = [p for p in self.pages if p.doc_id == page.doc_id]
+        # 不同子目录里的同名文件来源不同，不算同一文档。
+        doc_key = (page.doc_id, page.source_path or page.source_rel_dir)
+        same_doc = [p for p in self.pages
+                    if (p.doc_id, p.source_path or p.source_rel_dir) == doc_key]
         page_no = next(i for i, p in enumerate(same_doc) if p is page) + 1
         name = f"{page.doc_id}·第{page_no}页" if len(same_doc) > 1 else page.doc_id
-        item = QListWidgetItem(f"{index + 1:02d}  {name}\n{state}")
-        item.setToolTip(f"{page.doc_id} · 第 {page_no} 页 · {state}")
+        item = QTreeWidgetItem([f"{index + 1:02d}  {name}\n{state}"])
+        item.setToolTip(0, f"{page.doc_id} · 第 {page_no} 页 · {state}")
         colors = {"运行失败": "#ae4940", "质量未通过": "#ae4940",
                   "待复核": "#967329", "通过": "#287d55",
                   "辅助修复·待复核": "#967329", "辅助修复·检查未通过": "#ae4940"}
-        item.setForeground(QColor(colors.get(state, "#52645a")))
+        item.setForeground(0, QBrush(QColor(colors.get(state, "#52645a"))))
         return item
+
+    # ---- 图片列表树：按来源子目录分层，文件夹行只负责展开/收起 ----
+    @staticmethod
+    def _rel_dir_parts(rel: str) -> tuple[str, ...]:
+        return tuple(p for p in Path(rel).parts if p not in ("", ".")) if rel else ()
+
+    def _rebuild_page_tree(self) -> None:
+        """按每页 source_rel_dir 建子目录树；同批不同子目录的同名文件可在树中区分。"""
+        self.page_list.clear()
+        self._page_items = {}
+        if not self.batch:
+            return
+        counts: dict[tuple[str, ...], int] = {}
+        for page in self.pages:
+            parts = self._rel_dir_parts(page.source_rel_dir)
+            for n in range(1, len(parts) + 1):
+                counts[parts[:n]] = counts.get(parts[:n], 0) + 1
+        folders: dict[tuple[str, ...], QTreeWidgetItem] = {}
+        for i, page in enumerate(self.pages):
+            parent = self.page_list.invisibleRootItem()
+            parts = self._rel_dir_parts(page.source_rel_dir)
+            for n, part in enumerate(parts, start=1):
+                key = parts[:n]
+                folder = folders.get(key)
+                if folder is None:
+                    folder = QTreeWidgetItem([f"📁 {part} · {counts[key]} 张"])
+                    folder.setFlags(folder.flags() & ~Qt.ItemIsSelectable)
+                    font = folder.font(0)
+                    font.setBold(True)
+                    folder.setFont(0, font)
+                    folder.setForeground(0, QBrush(QColor("#52645a")))
+                    folder.setToolTip(0, f"子目录 {'/'.join(key)} · {counts[key]} 张（点击展开/收起）")
+                    parent.addChild(folder)
+                    folders[key] = folder
+                parent = folder
+            item = self._page_item(i)
+            item.setData(0, Qt.UserRole, i)
+            parent.addChild(item)
+            self._page_items[i] = item
+        # 文件夹行的默认展开状态不受布局时机影响，统一显式展开。
+        self.page_list.expandAll()
+
+    def _page_tree_current_changed(self, current, _previous) -> None:
+        # 文件夹行不可选中，只有图片行带页号数据。
+        index = current.data(0, Qt.UserRole) if current is not None else None
+        if index is not None:
+            self.show_page(index)
+
+    def _page_tree_item_clicked(self, item, _column) -> None:
+        # 文件夹行不可选中：点击名称展开/收起；点击左侧箭头由树自行切换，跳过以免重复。
+        if item is None or item.data(0, Qt.UserRole) is not None:
+            return
+        pos = self.page_list.viewport().mapFromGlobal(QCursor.pos())
+        if pos.x() < self.page_list.visualItemRect(item).left():
+            return
+        self._toggle_folder(item)
+
+    def _toggle_folder(self, item: QTreeWidgetItem) -> None:
+        if item.isExpanded():
+            self.page_list.collapseItem(item)
+        else:
+            self.page_list.expandItem(item)
+
+    def _select_page(self, index: int) -> None:
+        item = self._page_items.get(index)
+        if item is None:
+            self.show_page(-1)
+            return
+        self.page_list.setCurrentItem(item)
 
     def set_view_mode(self, mode: str) -> None:
         if mode not in self.view_buttons:
@@ -1514,7 +1649,7 @@ def shot(path: str | None, out_dir: str, *, automatic_selection: bool = False) -
     win.start_run()
     win.worker.wait(240_000)
     app.processEvents()
-    win.page_list.setCurrentRow(0)
+    win._select_page(0)
     app.processEvents()
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)

@@ -170,7 +170,7 @@ class AssistedDesktopTests(unittest.TestCase):
 
     def test_switch_page_invalidates_pending_proposal(self):
         self.win._assist_pending = proposal(self.base)
-        self.win.page_list.setCurrentRow(1)
+        self.win._select_page(1)
         self.assertIsNone(self.win._assist_pending)
         self.assertFalse(self.win.assist_confirm_btn.isEnabled())
 

@@ -429,7 +429,7 @@ class PromptPanelTests(unittest.TestCase):
         self.win.batch_list.setCurrentRow(0)
         self.win.select_batch(0)  # 行号未变时信号不触发，直接调用
         self.app.processEvents()
-        texts = [self.win.page_list.item(i).text() for i in range(4)]
+        texts = [self.win._page_items[i].text(0) for i in range(4)]
         self.assertIn('real_009·第1页', texts[0])
         self.assertIn('real_009·第2页', texts[1])
         self.assertIn('real_009·第3页', texts[2])

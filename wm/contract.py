@@ -115,6 +115,9 @@ class PageImage:
     source_path: str | None = None
     source_page_index: int | None = None
     source_revision: tuple[int, int] | None = None
+    # 来源文件所在目录相对导入根目录的路径（如 "子目录/深层"），空串表示在根目录；
+    # 由导入时写入，供界面树形展示，不参与处理。
+    source_rel_dir: str = ""
 
     @property
     def height(self) -> int:
