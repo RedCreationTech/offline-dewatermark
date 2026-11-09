@@ -1,11 +1,10 @@
-"""基线/防退化控制轮的双报告生成器（固定模板 v2）。
+"""基线/防退化控制轮报告生成器（固定模板 v2，仅明细报告）。
 
-每次 freeze / test / test-release 跑完生成两份：
-- 摘要报告（可发送单文件）：结论置顶 + 数字看板 + 处理清单 + 分层总表，
-  样本图全部 base64 内嵌，命名带标题+日期+时间。
-- 明细报告（本地工具）：结论置顶 + 三模式 tab + 搜索/筛选 + 效果三档分卡（可点击过滤）
-  + 同图重复批次合并（默认显示较差档）+ 逐页展开，图片保留相对路径
-  （AGENTS.md §8 对全量逐页明细的 base64 豁免）。
+每次 freeze / test / test-release 跑完生成一份明细报告（本地逐张核查工具）：
+结论置顶 + 三档 tab + 搜索/筛选 + 效果三档分卡（可点击过滤）
++ 同图重复批次合并（默认显示较差档）+ 逐页展开 + 历次基线对比，
+图片保留相对路径（AGENTS.md §8 对全量逐页明细的 base64 豁免；
+2026-11-05 起取消摘要报告，只保留明细报告，对外发送打包同轮目录压缩包）。
 
 口径（数据驱动，两份报告一致）：
 - 分档只看：运行错误、无水印对照是否误选改动、笔画召回率、非水印区误差。
@@ -14,7 +13,7 @@
 - 多选背景不作为分档指标：它仍逐张显示在卡片上（绝对像素+占全图百分比），供目视参考。
 - 术语浮层词表见 GLOSSARY（点击"?"弹白话解释，可收起）。
 
-调用：build_both(out_dir)；regression_control.write_report 在写出旧版报告后调用。
+调用：build_report(out_dir)；regression_control.write_report 在写出报告时调用。
 历史封存不追溯重渲染。
 """
 from __future__ import annotations
@@ -65,7 +64,7 @@ GLOSSARY = {
 
 LOW_RECALL = 0.3
 GOOD_RECALL = 0.6
-BAD_FP_FRAC = 0.005     # 多选占比 0.5% 列入摘要异常清单（不影响分档）
+BAD_FP_FRAC = 0.005     # 多选占比 0.5% 列入异常清单（不影响分档）
 GOOD_FP_FRAC = 0.002    # 多选占比 0.2%（fp 专页入口阈值）
 CMP_RECALL_TOL = 0.03   # 与上次基线对比：召回率差异 ≤3pp 视为持平
 CMP_MAE_TOL = 5.0       # 与上次基线对比：水印区误差差异 ≤5 视为持平
@@ -493,84 +492,6 @@ def _case_metric_line(r: dict) -> str:
             f'耗时 {r.get("elapsed_ms", 0) / 1000:.1f}s · {esc(str(r.get("method")))}')
 
 
-def build_summary(out: Path, run: dict, a: dict, moment: str) -> Path:
-    e = esc
-    outliers = list(a['low_recall']) + [r for r in a['high_fp'] if r not in a['low_recall']]
-    ranked, seen = [], set()
-    for r in sorted(outliers, key=lambda x: ((x.get('recall') if x.get('recall') is not None else 0),
-                                             -(x.get('false_positive_pixels') or 0))):
-        if r['key'] in seen:
-            continue
-        seen.add(r['key'])
-        ranked.append(r)
-    show = a['errors'][:10] + ranked[:30]
-
-    def figs_embed(r):
-        imgs = []
-        for fname, cap in [('原图预览.jpg', '原图'), ('选区预览.jpg', '选区'), ('处理结果.png', '结果'),
-                           ('漏选多选核对.jpg', '蓝漏选/橙多选')]:
-            p = (r.get('files') or {}).get(fname)
-            if p and Path(p).is_file():
-                imgs.append(f'<figure><img loading="lazy" src="{_thumb(Path(p))}"><figcaption>{cap}</figcaption></figure>')
-        return f'<div class="figs">{"".join(imgs)}</div>' if imgs else '<p class="muted">无图像产物。</p>'
-
-    blocks = []
-    multi_mode = len({x['mode'] for x in a['recs']}) > 1
-    for r in show:
-        why = '运行错误' if r['status'] == 'error' else (
-            f'召回 {fmt_pct(r.get("recall"))}' + (f'、多选 {fmt_fp(r.get("false_positive_pixels"), r["_fp_frac"])}'
-                                                 if (r['_fp_frac'] or 0) > BAD_FP_FRAC or (r.get('false_positive_pixels') or 0) > BAD_FP_PX else ''))
-        mode_span = f'　<span class="muted">{e(r["mode"])}</span>' if multi_mode else ''
-        blocks.append(f'<div class="case"><h3>{e(_case_title(r))}　<span class="muted">{e(r["group"])}</span>'
-                      f'{mode_span}</h3>'
-                      f'<p class="bad">▲ {e(why)}</p><p class="muted">{e(_case_metric_line(r))}</p>{figs_embed(r)}</div>')
-    list_html = ''.join(blocks) if blocks else '<p class="good">没有运行错误，也没有触发异常参考线的样本。</p>'
-
-    grid = {}
-    for r in a['paired']:
-        if r.get('recall') is not None:
-            grid.setdefault((r['mode'], r['group']), []).append(r)
-    present = [m for m in ('desktop', 'desktop_protected', 'cli') if any(k[0] == m for k in grid)] or ['desktop']
-    groups = sorted({g for _, g in grid})
-    rows = []
-    for g in groups:
-        tds = [f'<td>{e(g)}</td>']
-        for m in present:
-            cell = grid.get((m, g), [])
-            if not cell:
-                tds.append('<td class="muted">—</td>')
-                continue
-            rc = sum(x['recall'] for x in cell) / len(cell)
-            fpf = [x['_fp_frac'] for x in cell if x['_fp_frac'] is not None]
-            fp_mean = sum(fpf) / len(fpf) if fpf else None
-            cls = 'bad' if rc < LOW_RECALL else ('mid' if rc < GOOD_RECALL else 'good')
-            tds.append(f'<td class="r"><span class="{cls}">{fmt_pct(rc)}</span><br>'
-                       f'<span class="muted">多选均 {fmt_pct(fp_mean)} · {len(cell)}页</span></td>')
-        rows.append('<tr>' + ''.join(tds) + '</tr>')
-    if len(present) == 1:
-        header_cells = '<th>均笔画召回</th>'
-    else:
-        header_cells = ''.join(f'<th>{e(mode_label_legacy[m] + ("（均召回）" if m == "desktop" else ""))}</th>' for m in present)
-    table_html = ('<table><tr><th>批次</th>' + header_cells + '</tr>'
-                  + ''.join(rows) + '</table>')
-
-    page = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>项目防退化控制摘要报告 {e(moment)}</title><style>{STYLE}</style></head><body><main>
-<h1>项目防退化控制摘要报告 <span class="muted">{e(moment)}</span></h1>
-{conclusion_html(run, a)}
-{chips_html(run, a)}
-<p class="note">本报告为摘要单文件（图片 base64 内嵌，可直接发送）；逐页明细见同目录《项目防退化控制明细报告 {e(moment)}》。分档指标：运行错误、负例改动、笔画召回率、非水印区误差；多选背景只逐张展示、不参与分档。像素误差不是水印残留率；所有样本不作独立泛化证明。</p>
-<h2>处理清单（运行错误 + 触发异常参考线的样本）</h2>
-{list_html}
-<h2>分层总表（带水印样本，按批次平均）</h2>
-{table_html}
-<p class="muted">参考线口径：平均笔画召回率 &lt;30% 标红、30–60% 标黄；多选背景超线样本列入上方清单但不影响分档。统计含全部完成页，错误页另列。</p>
-</main><div id="term-pop"></div><script>{TERMS_JS}</script></body></html>'''
-    dest = out / f'项目防退化控制摘要报告_{moment.replace("-", "").replace(" ", "_").replace(":", "")}.html'
-    dest.write_text(page)
-    return dest
-
-
 def _hist_stats(recs: list) -> dict:
     """一轮封存的汇总口径：有桌面默认记录就只统计桌面默认（与单模式新基线可比），否则全量。"""
     desk = [r for r in recs if r.get('mode') == 'desktop']
@@ -842,7 +763,7 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
 <h1>项目防退化控制明细报告 <span style="font-size:15px;color:#7a8a94">{e(moment)}</span></h1>
 <p class="byline">来源：{e(run.get('completed_at') or run.get('created_at'))} 完成的控制运行 · 版式同《效果分档总览》</p>
 {conclusion_html(run, a)}
-<p class="note">三档是自动指标初筛，不是验收结论；专业术语带 <i style="display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;font-size:10px;font-style:normal;background:#b0761a;color:#fff;border-radius:50%">?</i> 的可点击看解释。可发送的单文件摘要在同目录。</p>
+<p class="note">三档是自动指标初筛，不是验收结论；专业术语带 <i style="display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;font-size:10px;font-style:normal;background:#b0761a;color:#fff;border-radius:50%">?</i> 的可点击看解释。对外发送请打包本目录压缩包（明细图片为相对路径）。</p>
 </div>
 {history_html(out)}
 <p class="notice"><strong>三档是自动指标初筛，尚未逐张人工验收。</strong>“效果较好”不等于全部内容恢复正确；像素误差减少不等于水印去除率。无水印对照默认隐藏，勾选后可查看；它们仍用于检查误删，不计作去水印成功。</p>
@@ -883,7 +804,7 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
     return dest
 
 
-def build_both(out: Path) -> tuple[Path, Path]:
+def build_report(out: Path) -> Path:
     out = Path(out).resolve()
     run = load_run(out)
     a = analyse(run)
@@ -909,10 +830,10 @@ def build_both(out: Path) -> tuple[Path, Path]:
     a['cmp_counts'] = cmp_counts
     moment = run_moment(run)
     stamp = moment.replace('-', '').replace(' ', '_').replace(':', '')
-    if (out / f'项目防退化控制摘要报告_{stamp}.html').exists():
+    if (out / f'项目防退化控制明细报告_{stamp}.html').exists():
         # 目标报告已封存不可覆盖：用本次生成时间做新版本名（取自当前运行，不手填）。
         moment = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M')
-    return build_summary(out, run, a, moment), build_detail(out, run, a, moment)
+    return build_detail(out, run, a, moment)
 
 
 if __name__ == '__main__':
@@ -920,6 +841,5 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--run-dir', type=Path, required=True, help='防退化控制轮目录（含运行记录.json）')
     args = ap.parse_args()
-    summary, detail = build_both(args.run_dir)
-    print(summary)
+    detail = build_report(args.run_dir)
     print(detail)

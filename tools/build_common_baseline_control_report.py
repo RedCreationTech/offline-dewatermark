@@ -4,9 +4,10 @@
 
 把 out/常见水印基线_20261104/（run_common_baseline.py 的产出）装配成
 防退化控制轮目录的格式（运行记录.json / 原始清单.json / 参考_*/逐图效果初筛.json），
-然后直接调用 tools/build_control_reports.py 的 build_both() ——
-摘要/明细报告即为 11-04 定稿模版本体（结论置顶、三档 tab、筛选、
+然后直接调用 tools/build_control_reports.py 的 build_report() ——
+明细报告即为 11-04 定稿模版本体（结论置顶、三档 tab、筛选、
 较上次退化/优化对比、蓝漏选/橙多选核对图、放大查看）。
+2026-11-05 起不再生成摘要报告。
 
 对比参考取 20261104_002213 全量封存基线的同页子集（desktop 模式）。
 生成后把文件名与标题从“项目防退化控制”改为“常见水印基线”，内容其余部分不动。
@@ -29,11 +30,11 @@ APP = ROOT / 'data' / '应用测试输入'
 FREEZE = ROOT / 'out' / '项目防退化控制' / '20261104_002213_219680_freeze'
 
 sys.path.insert(0, str(ROOT))
-from tools.build_control_reports import build_both  # noqa: E402
+from tools.build_control_reports import build_report  # noqa: E402
 
 STYLE_LABEL = {
-    'timestamp': '日期时间戳', 'website': '网址文字', 'logo_transparent': '透明几何 Logo',
-    'logo_opaque': '不透明几何 Logo', 'local_text': '局部文字', 'tiny_corner': '高清小角标',
+    'timestamp': '日期时间戳', 'website': '网址文字',
+    'local_text': '局部文字', 'tiny_corner': '高清小角标',
     'signature': '模拟手写签名', 'center_text': '居中大字', 'center_white': '白色半透明大字',
     'center_gray': '灰黑半透明大字', 'tiled_diagonal': '斜向平铺文字',
 }
@@ -181,7 +182,7 @@ def main():
     (ref_dir / '逐图效果初筛_20261104.json').write_text(json.dumps(rows, ensure_ascii=False, indent=1))
     print(f'记录 {len(records)} 条，参考配对 {len(rows)} 页')
 
-    summary_path, detail_path = build_both(RUN)
+    detail_path = build_report(RUN)
 
     # 文件名与标题改为本主题（内容其余部分保持模原版式）；
     # 修正三处适配差异：时间显示、返回总目录相对深度、报告主题名。
@@ -189,10 +190,8 @@ def main():
     t1 = datetime.fromisoformat(s['completed_at'])
     moment = f"{t0.strftime('%Y-%m-%d')} 测试 {t0.strftime('%H:%M')}–{t1.strftime('%H:%M')}"
     tag = f"{t0.strftime('%Y%m%d')}_{t0.strftime('%H%M')}-{t1.strftime('%H%M')}"
-    new_sum = RUN / f'常见水印基线摘要报告_{tag}.html'
     new_det = RUN / f'常见水印基线明细报告_{tag}.html'
     for src, dst, old, new in (
-        (summary_path, new_sum, '项目防退化控制摘要报告', '常见水印基线摘要报告'),
         (detail_path, new_det, '项目防退化控制明细报告', '常见水印基线明细报告'),
     ):
         text = src.read_text('utf-8').replace(f'<title>{old}', f'<title>{new}')
@@ -202,7 +201,6 @@ def main():
                             'href="../水印验证报告总目录.html">← 返回报告总目录')
         dst.write_text(text, 'utf-8')
         src.unlink()
-    print(new_sum)
     print(new_det)
 
 

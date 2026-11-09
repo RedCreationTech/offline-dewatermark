@@ -116,7 +116,6 @@ def available_local_links(body, base=None):
 
 # 显式分类覆盖：新卡片和存量卡片统一生效（存量卡片优先按此迁移）。
 CATEGORY_OVERRIDES = {
-    '常见水印基线摘要报告': 'control',
     '常见水印基线明细报告': 'control',
     '常见水印': 'baseline',
 }
@@ -148,7 +147,7 @@ def card(identifier, group, body):
 
 
 def superseded_suffix(path: Path) -> str:
-    """同一封存目录里若存在更新版的摘要/明细报告，返回旧版标注文案，否则空串。"""
+    """同一封存目录里若存在更新版的明细报告，返回旧版标注文案，否则空串。"""
     m_ver = re.match(r'(项目防退化控制(?:摘要|明细)报告)_(\d{8}_\d{4})\.html$', path.name)
     if not m_ver:
         return ''
@@ -220,11 +219,8 @@ def baseline_card():
     state = '已完成记录并封存' if complete else '记录尚未完整，不可验收'
     version = directory.name.rsplit('_', 1)[-1]
     overview = OUT / '完整基线效果总览_20261029_V1/去水印效果分档总览_20261029.html'
-    summary_reports = sorted(directory.glob('项目防退化控制摘要报告_*.html'))
     detail_reports = sorted(directory.glob('项目防退化控制明细报告_*.html'))
-    if summary_reports:
-        entry, entry_label = summary_reports[-1], '摘要报告（结论与处理清单）'
-    elif overview.exists():
+    if overview.exists():
         entry, entry_label = overview, '按效果分档查看'
     elif detail_reports:
         entry, entry_label = detail_reports[-1], '明细报告（逐张核查）'
@@ -246,10 +242,7 @@ def baseline_card():
              f'运行或评分异常 {failures}；{mode_bits}。</p>'
              '<p><strong>观察基线记录当时表现，包括既有缺陷；不是当前工作版本全量通过、全部图片效果合格或独立泛化验证。</strong></p>')
     links = []
-    summary_reports = sorted(directory.glob('项目防退化控制摘要报告_*.html'))
     detail_reports = sorted(directory.glob('项目防退化控制明细报告_*.html'))
-    if summary_reports:
-        links.append(('摘要报告（单文件可发送）', summary_reports[-1].name))
     if detail_reports:
         links.append(('明细报告（tab／搜索）', detail_reports[-1].name))
     legacy = directory / '项目防退化控制报告.html'
@@ -297,7 +290,7 @@ def discover(cards, baseline):
             if stamp:
                 moment = datetime.strptime(stamp.group(1), '%Y%m%d_%H%M%S')
                 title = f'项目防退化控制报告 {moment:%Y-%m-%d %H:%M}'
-        # 同一封存目录里被更新版取代的摘要/明细报告标注旧版，避免误点旧口径。
+        # 同一封存目录里被更新版取代的明细报告标注旧版，避免误点旧口径。
         sup = superseded_suffix(path)
         if sup:
             title += sup

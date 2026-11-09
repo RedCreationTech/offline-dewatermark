@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.control_inventory import build_inventory
-from tools.build_control_reports import build_both as build_control_reports_both
+from tools.build_control_reports import build_report as build_control_report
 from tools.regression_guard import apply_reviews, canonical, compare_runs, compare_subset, digest
 from tools.regression_layers import jobs_for, selected_cases
 from tools.regression_retirements import load_profile, project_baseline
@@ -344,12 +344,17 @@ def verified_run(out):
 
 
 def write_report(out, run, old=None, gate=None):
-    # 固定模板双报告：摘要（base64 单文件，可发送）+ 明细（tab/搜索，本地逐张核查）。
-    # 旧版《项目防退化控制报告.html》已退役：摘要+明细覆盖其全部用途。
+    # 固定模板明细报告（tab/搜索，本地逐张核查）。
+    # 旧版《项目防退化控制报告.html》与摘要报告已退役：明细报告覆盖其全部用途。
     # 只新增文件、不改封存件；失败不阻断主流程。
     try:
-        summary, detail = build_control_reports_both(out)
-        print(f'报告已生成：{summary}；{detail}', flush=True)
+        if not run.get('complete'):
+            # 运行未封存前，报告只是过程工作文件：先删旧版再重写，
+            # 避免逐批各产生一个新版本文件（历史上每批一版、一轮堆积几十份）。
+            for prev in out.glob('项目防退化控制明细报告_*.html'):
+                prev.unlink()
+        detail = build_control_report(out)
+        print(f'报告已生成：{detail}', flush=True)
     except Exception as exc:
         print(f'双报告生成失败（不影响封存）：{type(exc).__name__}: {exc}', flush=True)
 
