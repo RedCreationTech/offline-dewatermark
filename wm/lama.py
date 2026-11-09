@@ -352,17 +352,29 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
         return inpaint(img, region, thr), [RepairName.LAMA]
 
     if mask.repair_mode == 'photo_repeat_inverse':
-        if (mask.overlay_opacity is None or mask.overlay_opacity.shape != img.shape[:2]
-                or not np.isfinite(mask.overlay_opacity).all()
-                or np.any(mask.overlay_opacity < 0) or np.any(mask.overlay_opacity > .6)):
-            raise ValueError('Repeated-photo inverse requires bounded measured opacity')
+        # 实测反解模型无效（缺透明度、形状不符、越界或含非有限值，或缺颜色模型）
+        # 时不整页报错：退回保守的神经补图，如实记录并交给自动检查标记待复核。
+        invalid_opacity = (
+            mask.overlay_opacity is None or mask.overlay_opacity.shape != img.shape[:2]
+            or not np.isfinite(mask.overlay_opacity).all()
+            or np.any(mask.overlay_opacity < 0) or np.any(mask.overlay_opacity > .6))
+        colour_map = (mask.veil_colour_map if mask.veil_colour_map is not None
+                      and mask.veil_colour_map.shape == img.shape else None)
+        global_colour = (mask.veil_offset if mask.veil_offset is not None
+                         and mask.veil_offset.shape == (3,) else None)
+        if invalid_opacity or (colour_map is None and global_colour is None):
+            if mask.overlay_opacity is None:
+                detail = '无透明度'
+            elif np.isfinite(mask.overlay_opacity).any():
+                detail = f"max={float(np.nanmax(mask.overlay_opacity)):.3f}"
+            else:
+                detail = '全为非有限值'
+            log.warning('重复照片反解的实测模型无效（%s），退回 LaMa 补图', detail)
+            region = (mask.footprint if mask.footprint is not None
+                      else mask.binary(thr.mask_alpha_min) > 0)
+            return inpaint(img, region, thr), [RepairName.LAMA]
         # Per-pixel colour map (from repeat_alignment) or global veil_offset (from photo_repeat_inverse)
-        if mask.veil_colour_map is not None and mask.veil_colour_map.shape == img.shape:
-            colour = mask.veil_colour_map.astype(np.float32)
-        elif mask.veil_offset is not None and mask.veil_offset.shape == (3,):
-            colour = mask.veil_offset.astype(np.float32)
-        else:
-            raise ValueError('Repeated-photo inverse requires colour map or veil_offset')
+        colour = (colour_map if colour_map is not None else global_colour).astype(np.float32)
         # Direct alpha unmixing: B = (I - alpha * C) / (1 - alpha)
         # alpha is non-zero only in the inverse region; elsewhere the formula
         # reduces to B = I, which the footprint mask restores anyway.

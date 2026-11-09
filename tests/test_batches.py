@@ -160,6 +160,22 @@ class OptionalPriorTests(unittest.TestCase):
         self.assertEqual(worker.done,2)
 
 
+class FailureLoggingTests(unittest.TestCase):
+    def test_page_failure_logs_traceback_and_reports_error(self):
+        batch = Batch('a', [page(0)])
+        worker = BatchWorker([(batch, [0], Thresholds(), 11, False)])
+        events = []
+        worker.update.connect(events.append)
+        with patch('wm.batches.masks.estimate_single_page', side_effect=RuntimeError('boom')), \
+             patch('wm.batches.pipeline._process_one', side_effect=RuntimeError('boom')), \
+             self.assertLogs('wm.batches', level='ERROR') as cm:
+            worker.run()
+        self.assertEqual(worker.outcomes, ['运行失败'])
+        page_events = [e for e in events if e['kind'] == 'page']
+        self.assertIn('boom', page_events[0]['error'])
+        self.assertTrue(any('处理失败' in m for m in cm.output))
+
+
 class ImportTests(unittest.TestCase):
     """目录导入（含子目录）与图片列表子目录树形展示。"""
 

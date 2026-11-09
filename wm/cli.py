@@ -163,6 +163,8 @@ def main(argv: list[str] | None = None) -> None:
     p.set_defaults(fn=cmd_run)
 
     args = parser.parse_args(argv)
+    from . import logging_setup
+    logging_setup.setup_logging()
     args.fn(args)
 
 

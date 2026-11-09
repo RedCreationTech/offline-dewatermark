@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QLocale, QTranslator, QLibraryInfo, QTimer, QThread, Signal
+from PySide6.QtCore import Qt, QLocale, QTranslator, QLibraryInfo, QTimer, QThread, Signal, QFileSystemWatcher
 from PySide6.QtGui import QFont, QColor, QCursor, QBrush
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QGridLayout, QGroupBox,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import documents, pipeline
+from . import logging_setup
 from .batches import Batch, BatchWorker
 from .batch_timing import format_duration
 from .contract import PageImage, PageResult, Thresholds
@@ -342,6 +343,24 @@ class MainWindow(QMainWindow):
         self.metrics.setMinimumHeight(150)
         right_layout.addWidget(self.metrics, 1)
         right_layout.addWidget(self.conditions)
+        right_layout.addWidget(label("运行日志"))
+        log_row = QHBoxLayout()
+        log_row.addWidget(label("日志级别", "muted"))
+        self.log_level_box = QComboBox()
+        self.log_level_box.addItems(list(logging_setup.LEVELS))
+        self.log_level_box.setCurrentText(logging_setup.configured_level())
+        self.log_level_box.currentTextChanged.connect(self._change_log_level)
+        log_row.addWidget(self.log_level_box)
+        log_row.addStretch()
+        right_layout.addLayout(log_row)
+        log_hint = label("日志文件：logs/wm.log", "muted")
+        log_hint.setToolTip(str(logging_setup.LOG_FILE))
+        right_layout.addWidget(log_hint)
+        # 启动后动态调整：直接编辑 config/logging.json 即生效（保存后无需重启）。
+        self._log_watcher = QFileSystemWatcher(self)
+        if logging_setup.CONFIG_PATH.exists():
+            self._log_watcher.addPath(str(logging_setup.CONFIG_PATH))
+        self._log_watcher.fileChanged.connect(self._reload_log_level)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setMinimumWidth(350)
@@ -1472,7 +1491,8 @@ class MainWindow(QMainWindow):
         page_no = next(i for i, p in enumerate(same_doc) if p is page) + 1
         name = f"{page.doc_id}·第{page_no}页" if len(same_doc) > 1 else page.doc_id
         item = QTreeWidgetItem([f"{index + 1:02d}  {name}\n{state}"])
-        item.setToolTip(0, f"{page.doc_id} · 第 {page_no} 页 · {state}")
+        error = self.batch.errors.get(index)
+        item.setToolTip(0, f"{page.doc_id} · 第 {page_no} 页 · {state}" + (f"\n{error}" if error else ""))
         colors = {"运行失败": "#ae4940", "质量未通过": "#ae4940",
                   "待复核": "#967329", "通过": "#287d55",
                   "辅助修复·待复核": "#967329", "辅助修复·检查未通过": "#ae4940"}
@@ -1547,6 +1567,24 @@ class MainWindow(QMainWindow):
             self.show_page(-1)
             return
         self.page_list.setCurrentItem(item)
+
+    def _change_log_level(self, level: str) -> None:
+        # 界面调整：立即生效并写回配置文件，下次启动沿用。
+        logging_setup.persist_level(level)
+        applied = logging_setup.apply_level(level)
+        self.status.setText(f"日志级别：{applied}（已写入 config/logging.json）")
+
+    def _reload_log_level(self, _path: str) -> None:
+        # 配置文件监听：启动后直接编辑 config/logging.json 即生效。
+        if not logging_setup.CONFIG_PATH.exists():
+            return
+        level = logging_setup.configured_level()
+        self.log_level_box.blockSignals(True)
+        self.log_level_box.setCurrentText(level)
+        self.log_level_box.blockSignals(False)
+        logging_setup.apply_level(level)
+        if str(logging_setup.CONFIG_PATH) not in self._log_watcher.files():
+            self._log_watcher.addPath(str(logging_setup.CONFIG_PATH))
 
     def set_view_mode(self, mode: str) -> None:
         if mode not in self.view_buttons:
@@ -1669,6 +1707,7 @@ def main() -> None:
     parser.add_argument("--experimental-auto-selection", action="store_true",
                         help="试用自动比较处理方法；未完成默认放行，结果需复核")
     args = parser.parse_args()
+    logging_setup.setup_logging()
     if args.smoke:
         sys.exit(smoke(args.file, automatic_selection=args.experimental_auto_selection))
     if args.shot:

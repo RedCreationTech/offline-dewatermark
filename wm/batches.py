@@ -212,6 +212,8 @@ class BatchWorker(QThread):
                 except Exception as exc:
                     if self.stopped and isinstance(exc, InterruptedError):
                         return
+                    logging.getLogger(__name__).exception(
+                        "%s 第 %s 张处理失败", batch.name, index + 1)
                     payload = dict(result=None, error=str(exc))
                 result = payload["result"]
                 self.outcomes.append("运行失败" if result is None else

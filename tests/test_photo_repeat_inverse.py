@@ -49,21 +49,25 @@ class PhotoRepeatInverseTests(unittest.TestCase):
         self.assertIsNone(photo_repeat_inverse.estimate(heavy, coarse))
         self.assertIsNone(photo_repeat_inverse.estimate(clean, np.zeros(coarse.shape, bool)))
 
-    def test_inverse_requires_measured_opacity_and_honours_selection(self):
+    def test_inverse_with_invalid_model_falls_back_to_neural_inpaint(self):
+        # 实测反解模型无效（缺透明度/含 NaN）时不整页报错，退回保守的 LaMa 补图。
         image = np.full((20, 30, 3), 100, np.uint8)
         region = np.zeros((20, 30), bool)
         region[5:10, 5:10] = True
         mask = MaskLayer(region.astype(np.float32), footprint=region,
                          repair_mode='photo_repeat_inverse', veil_strength=np.zeros(3),
                          veil_offset=np.array([40, 75, 140]))
-        with self.assertRaises(ValueError):
-            lama.repair_with_lama(image, mask, Thresholds())
+        with patch('wm.lama.inpaint', return_value=image.copy()) as fake:
+            output, used = lama.repair_with_lama(image, mask, Thresholds())
+        self.assertEqual(used, [lama.RepairName.LAMA])
+        fake.assert_called_once()
         mask.overlay_opacity = np.full(region.shape, .15, np.float32)
         output, _ = lama.repair_with_lama(image, mask, Thresholds())
         np.testing.assert_array_equal(output[~region], image[~region])
         mask.overlay_opacity[0, 0] = np.nan
-        with self.assertRaises(ValueError):
+        with patch('wm.lama.inpaint', return_value=image.copy()) as fake:
             lama.repair_with_lama(image, mask, Thresholds())
+        fake.assert_called_once()
 
     def test_export_uses_physical_opacity_not_binary_selection(self):
         opacity = np.full((4, 5), .15, np.float32)
