@@ -126,20 +126,25 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         # Another generic channel choice would discard its source evidence.
         return mask
     if mask.method in ('photo_observed_repeats', 'photo_complete_repeated_rows', 'repeated_oblique_text'):
-        from . import observed_text
-        located = observed_text.repeated_photo(image, ocr.read_lines(image) or [],
-                                               stroke_only=True, search_mask=base)
-        if located is not None:
-            return located
+        from . import observed_text, repeat_alignment
+        region, peaks = repeat_alignment.align_with_peaks(image, base, ocr.read_lines(image) or [])
+        if region is None:
+            unconfirmed = observed_text._layer(np.zeros_like(base), 'recall_repeated_strokes')
+            unconfirmed.confidence = 0.
+            return unconfirmed
+        combined, inverse, alpha_map, colour_map = repeat_alignment.complete_and_invert(image, region, peaks)
+        if combined is not None and inverse is not None and inverse.any():
+            layer = observed_text._layer(combined, 'recall_repeated_strokes')
+            layer.overlay_opacity = np.where(inverse, alpha_map, 0)
+            layer.veil_colour_map = colour_map
+            layer.repair_mode = 'photo_repeat_inverse'
+            return layer
+        return observed_text._layer(region, 'recall_repeated_strokes')
     lines = _lines(image, base)
     if not lines:
         return mask
     height = float(np.median([ocr._geometry(box)[0] for box, _, _ in lines]))
     domain = _search_domain(base.shape, lines)
-    if mask.method in ('photo_observed_repeats', 'photo_complete_repeated_rows', 'repeated_oblique_text'):
-        found = photo_observations._repeated_domain(image, lines)
-        if found is not None:
-            domain |= found[0]
     seed = base & domain
     preserve = (thr.experimental_seed_preservation and mask.repair_mode == 'inpaint'
                 and not thr.experimental_colour_refinement)

@@ -343,7 +343,20 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
                 or not np.isfinite(mask.overlay_opacity).all()
                 or np.any(mask.overlay_opacity < 0) or np.any(mask.overlay_opacity > .6)):
             raise ValueError('Repeated-photo inverse requires bounded measured opacity')
-        out = _alpha_unmix(img, mask, coverage=mask.overlay_opacity)
+        # Per-pixel colour map (from repeat_alignment) or global veil_offset (from photo_repeat_inverse)
+        if mask.veil_colour_map is not None and mask.veil_colour_map.shape == img.shape:
+            colour = mask.veil_colour_map.astype(np.float32)
+        elif mask.veil_offset is not None and mask.veil_offset.shape == (3,):
+            colour = mask.veil_offset.astype(np.float32)
+        else:
+            raise ValueError('Repeated-photo inverse requires colour map or veil_offset')
+        # Direct alpha unmixing: B = (I - alpha * C) / (1 - alpha)
+        # alpha is non-zero only in the inverse region; elsewhere the formula
+        # reduces to B = I, which the footprint mask restores anyway.
+        alpha = mask.overlay_opacity[..., None].astype(np.float32)
+        denom = np.maximum(1.0 - alpha, 1e-3)
+        raw = (img.astype(np.float32) - alpha * colour) / denom
+        out = np.clip(np.rint(raw), 0, 255).astype(np.uint8)
         out[~mask.footprint] = img[~mask.footprint]
         return out, [RepairName.ALPHA_UNMIX]
 

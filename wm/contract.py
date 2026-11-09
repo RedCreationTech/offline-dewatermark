@@ -147,6 +147,8 @@ class MaskLayer:
     text_keepout: np.ndarray | None = None
     # Measured physical opacity, separate from selectable stroke coverage.
     overlay_opacity: np.ndarray | None = None
+    # Per-pixel watermark colour for algebraic inverse (used with overlay_opacity).
+    veil_colour_map: np.ndarray | None = None
     # An explicit human selection grants repair permission, not physical alpha.
     # Automatic layers leave this unset and retain their existing behaviour.
     selection: np.ndarray | None = None

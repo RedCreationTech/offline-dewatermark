@@ -51,17 +51,6 @@ def _protect_scene_text(footprint, source_lines):
     return footprint & ~protected
 
 
-def _positive_ink_view(feature, observations):
-    """Reject enhanced views whose bright foreground is mostly word background."""
-    fractions = []
-    for box, _, _ in observations:
-        domain = np.zeros(feature.shape, np.uint8)
-        cv2.fillConvexPoly(domain, np.rint(box).astype(np.int32), 1)
-        if domain.any():
-            fractions.append(float(np.mean(feature[domain > 0] > 3)))
-    return bool(fractions) and float(np.median(fractions)) <= .50
-
-
 def _stroke_template(typical):
     """Hysteresis on repeated pixel evidence; holes and whitespace remain zero."""
     high, _ = cv2.threshold(np.uint8(np.clip(typical, 0, 12)*20), 0, 255,
@@ -75,7 +64,7 @@ def _stroke_template(typical):
     return keep[labels]
 
 
-def repeated_photo(image, source_lines, *, stroke_only=False, search_mask=None):
+def repeated_photo(image, source_lines):
     h,w=image.shape[:2]
     candidates=[]
     for box,text,score in source_lines:
@@ -103,15 +92,9 @@ def repeated_photo(image, source_lines, *, stroke_only=False, search_mask=None):
         if len(observations)>=3:
             centres = np.array([a[0].mean(0) for a in observations])
             if np.ptp(centres[:,0]) >= 3*height and np.ptp(centres[:,1]) >= 2*height:
-                if stroke_only:
-                    # OCR can read light holes on a dark enhanced view. Such
-                    # a channel highlights the background around the letters,
-                    # producing a solid block if mistaken for the ink stencil.
-                    if not _positive_ink_view(feature, observations):
-                        continue
-                choices.append((len(observations),feature,observations,channel))
+                choices.append((len(observations),feature,observations))
     if not choices:return None
-    _,feature,observations,chosen_channel=max(choices,key=lambda a:a[0])
+    _,feature,observations=max(choices,key=lambda a:a[0])
     vectors=[a[0][1]-a[0][0] for a in candidates]
     angle=float(np.median([np.degrees(np.arctan2(v[1],v[0])) for v in vectors]))
     matrix=cv2.getRotationMatrix2D((w/2,h/2),angle,1)
@@ -121,33 +104,19 @@ def repeated_photo(image, source_lines, *, stroke_only=False, search_mask=None):
     field=cv2.warpAffine(feature,matrix,(rw,rh))
     valid=cv2.warpAffine(np.ones((h,w),np.uint8),matrix,(rw,rh),flags=cv2.INTER_NEAREST)>0
     signal=np.clip(field/8,0,1).astype(np.float32)
-    if stroke_only:
-        opponent = np.uint8(np.clip(128+rgb[...,chosen_channel]-(rgb[...,(chosen_channel+1)%3]+rgb[...,(chosen_channel+2)%3])/2,0,255))
-        size = min(31, max(9, int(.45*height) | 1))
-        both_signs = np.abs(opponent.astype(np.float32)-cv2.medianBlur(opponent, size))
-        both_signs = cv2.GaussianBlur(both_signs, (0, 0), .5)
-        matching_signal = np.clip(cv2.warpAffine(both_signs,matrix,(rw,rh))/8,0,1).astype(np.float32)
-        if search_mask is not None:
-            observed = cv2.warpAffine(search_mask.astype(np.uint8), matrix, (rw,rh), flags=cv2.INTER_NEAREST)
-            active = (observed.sum(1) > max(5, .025*rw)).astype(np.uint8)
-            active = cv2.morphologyEx(active[:,None],cv2.MORPH_CLOSE,
-                                      np.ones((max(3,int(.25*height)),1),np.uint8))[:,0]
-            row_search = np.broadcast_to(active[:,None] > 0,(rh,rw))
-        else:
-            row_search = None
     options=[];domains=np.zeros((rh,rw),np.uint8)
     for box,bh,score in observations:
         b=cv2.transform(box[None].astype(np.float32),matrix)[0]
         cv2.fillConvexPoly(domains,np.rint(b).astype(np.int32),1)
         x0,y0=np.maximum(np.floor(b.min(0)).astype(int)-3,0)
         x1,y1=np.minimum(np.ceil(b.max(0)).astype(int)+4,[rw,rh])
-        width=min(x1-x0,max(24 if stroke_only else 40,int((1.6 if stroke_only else 5)*height)))
-        for x in range(x0,max(x0+1,x1-width+1),max(12 if stroke_only else 20,int((.8 if stroke_only else 3)*height))):
+        width=min(x1-x0,max(40,int(5*height)))
+        for x in range(x0,max(x0+1,x1-width+1),max(20,int(3*height))):
             patch=signal[y0:y1,x:x+width]
             support=(field[y0:y1,x:x+width]>3)&valid[y0:y1,x:x+width]
             if patch.shape[0]<12 or patch.shape[1]<40 or not .05<support.mean()<.4:continue
             # Prefer uncluttered source observations: type has blank spaces.
-            options.append((float(np.mean(patch<.15)),patch.copy(),support.copy(),x,y0))
+            options.append((float(np.mean(patch<.15)),patch.copy()))
     if not options:return None
     result=np.zeros((rh,rw),np.uint8)
     # Deskew the verified direction before another OCR observation. Oblique
@@ -159,73 +128,33 @@ def repeated_photo(image, source_lines, *, stroke_only=False, search_mask=None):
         if score<.60 or len(text.strip())<3 or bt>8 or not .55*height<bh<1.65*height or bl<2*bh:continue
         cv2.fillConvexPoly(domains,np.rint(box).astype(np.int32),1)
     domains=cv2.dilate(domains,np.ones((5,5),np.uint8))
-    if not stroke_only:
-        result[(domains>0)&valid&(field>2)]=1
+    result[(domains>0)&valid&(field>2)]=1
     matches=0
-    for _,patch,support,source_x,source_y in sorted(options,key=lambda a:a[0],reverse=True)[:24 if stroke_only else 8]:
+    for _,patch in sorted(options,key=lambda a:a[0],reverse=True)[:8]:
         ph,pw=patch.shape
         scores=cv2.matchTemplate(signal,patch,cv2.TM_CCOEFF_NORMED)
         found=[]
         for _ in range(100):
             _,value,_,(x,y)=cv2.minMaxLoc(scores)
-            if not np.isfinite(value) or value<(.62 if stroke_only else .58):break
+            if not np.isfinite(value) or value<.58:break
             found.append((x,y));scores[max(0,y-ph//2):y+ph//2+1,max(0,x-pw//2):x+pw//2+1]=-1
         if len(found)<3:continue
         stack=np.stack([field[y:y+ph,x:x+pw] for x,y in found])
-        typical = np.percentile(stack,50 if stroke_only else 30,axis=0)
-        if stroke_only:
-            recurring = _stroke_template(typical)
-        else:
-            recurring=typical>1
+        recurring=np.percentile(stack,30,axis=0)>1
         if not .04<recurring.mean()<.45:continue
-        if stroke_only:
-            # Learn ink only from positive-colour copies, then match the same
-            # validated glyph through backgrounds where its contrast reverses.
-            match_patch = matching_signal[source_y:source_y+ph,source_x:source_x+pw]
-            extra_scores = cv2.matchTemplate(matching_signal,match_patch,cv2.TM_CCOEFF_NORMED)
-            for _ in range(100):
-                _, value, _, (x,y) = cv2.minMaxLoc(extra_scores)
-                if not np.isfinite(value) or value < (.65 if row_search is not None else .72):
-                    break
-                extra_scores[max(0,y-ph//2):y+ph//2+1,max(0,x-pw//2):x+pw//2+1] = -1
-                local_signal = matching_signal[y:y+ph,x:x+pw]
-                ink_contrast = float(local_signal[recurring].mean()-local_signal[~recurring].mean())
-                if ink_contrast >= .08 and (row_search is None or row_search[min(rh-1,y+ph//2), min(rw-1,x+pw//2)]):
-                    found.append((x,y))
         for x,y in found:
-            stencil = (recurring & (matching_signal[y:y+ph,x:x+pw] > .12)) if stroke_only else recurring
-            result[y:y+ph,x:x+pw]|=stencil.astype(np.uint8)
-        if stroke_only:
-            # A full learned glyph stencil may continue through the frame edge.
-            # Border copies supply no zeros to the shape learned above.
-            padded_signal = cv2.copyMakeBorder(signal, ph, ph, pw, pw, cv2.BORDER_CONSTANT)
-            edge_scores = cv2.matchTemplate(padded_signal, patch, cv2.TM_CCOEFF_NORMED)
-            edge_scores[ph:signal.shape[0]+1, pw:signal.shape[1]+1] = -1
-            for _ in range(60):
-                _, value, _, (ex, ey) = cv2.minMaxLoc(edge_scores)
-                if not np.isfinite(value) or value < .65:
-                    break
-                edge_scores[max(0, ey-ph//2):ey+ph//2+1, max(0, ex-pw//2):ex+pw//2+1] = -1
-                x, y = ex-pw, ey-ph
-                left, right = max(0, x), min(signal.shape[1], x+pw)
-                top, bottom = max(0, y), min(signal.shape[0], y+ph)
-                if right-left >= .35*pw and bottom-top >= .35*ph:
-                    stencil = recurring[top-y:bottom-y, left-x:right-x] & (matching_signal[top:bottom,left:right] > .12)
-                    result[top:bottom, left:right] |= stencil.astype(np.uint8)
+            result[y:y+ph,x:x+pw]|=recurring.astype(np.uint8)
         matches+=len(found)
     if matches<3:return None
-    footprint = (cv2.warpAffine(result, cv2.invertAffineTransform(matrix), (w, h),
-                               flags=cv2.INTER_NEAREST) > 0) if stroke_only else _bounded_repeat_footprint(result, matrix, (w, h))
+    footprint = _bounded_repeat_footprint(result, matrix, (w, h))
     if footprint is None:return None
-    if not stroke_only:
-        from . import photo_repeat_inverse
-        inverse = photo_repeat_inverse.estimate(image, footprint)
-        if inverse is not None:
-            return inverse
-    if not stroke_only:
-        footprint = _protect_scene_text(footprint, source_lines)
+    from . import photo_repeat_inverse
+    inverse = photo_repeat_inverse.estimate(image, footprint)
+    if inverse is not None:
+        return inverse
+    footprint = _protect_scene_text(footprint, source_lines)
     if footprint.mean() <= .01:return None
-    return _layer(footprint,'recall_repeated_strokes' if stroke_only else 'photo_observed_repeats')
+    return _layer(footprint,'photo_observed_repeats')
 
 
 def shadow_paper(image, source_lines):
