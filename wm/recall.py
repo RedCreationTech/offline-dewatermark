@@ -162,6 +162,24 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         region = _pixel_strokes(image, domain, seed, height,
                                 repeat_support=mask.repeat_stroke_support)
         combined = base | region
+        # 密网格相邻行有半周期错位（stagger）时，错相位的整行实例可能
+        # NCC 不达盖章门槛而整行漏印（实测 s001 右缘整字漏印、残字呈空心
+        # 轮廓）。兜底：OCR 读到但盖章几乎没覆盖的文字行，用行内"暗于纸面"
+        # 的局部对比证据做种子生长补回；仅限当前图证据，行内无证据不动。
+        paper = (float(mask.paper.reshape(-1, 3).mean()) if mask.paper is not None
+                 else float(np.percentile(image.astype(np.float32).mean(2), 97)))
+        gray = cv2.GaussianBlur(image.astype(np.float32), (0, 0), .8).mean(2)
+        for box, _, _ in lines:
+            line = np.zeros(base.shape, np.uint8)
+            cv2.fillConvexPoly(line, np.rint(box).astype(np.int32), 1)
+            line = line > 0
+            if line.sum() < 50 or (line & combined).sum() >= .05 * line.sum():
+                continue
+            line_seed = line & domain & (gray < paper - 18.)
+            if line_seed.sum() < 8:
+                continue
+            combined |= _pixel_strokes(image, domain, line_seed, height)
+        combined = cv2.dilate(combined.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
         return replace(mask, alpha=combined.astype(np.float32), footprint=combined,
                        text_keepout=mask.text_keepout)
     base = mask.binary(thr.mask_alpha_min) > 0
