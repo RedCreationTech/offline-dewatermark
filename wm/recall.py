@@ -179,7 +179,12 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         # 标记（V1.26 口径：不达标保留原定位）。原实现回退到对齐戳印子集，会把
         # 原定位已验证的弱实例（如栅栏上的平铺文字）整片丢弃，见
         # docs/提示词去水印典型问题记录_20261109.md 条目 #002。
-        return replace(mask, skip_reason='cannot_explain_base')
+        # 并集并入对齐戳印的图边裁切补片：基线匹配的滑窗要求模板完整落在图内，
+        # 够不到被边缘裁切的残字；对齐路径按已观测位移外推、并以可见笔画的
+        # 支撑与对比验证过这些补片（_add_clipped）。
+        combined = base if region is None else (base | region)
+        return replace(mask, alpha=combined.astype(np.float32), footprint=combined,
+                       skip_reason='cannot_explain_base')
     lines = _lines(image, base)
     if not lines:
         return mask
