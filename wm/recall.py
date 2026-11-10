@@ -147,6 +147,23 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         return replace(mask, footprint=mask.binary(thr.mask_alpha_min) > 0)
     if mask.method in ('single_periodic_overlay', 'single_periodic_document'):
         return mask
+    if mask.repair_mode == 'paper_repeat_cleanup':
+        # 纸面重复文字图层已带实测 paper/veil 模型与正文保护区，清理是纸面
+        # 直填而非 LaMa；笔画补全只能作当前图对比证据的并集补全，不得把实测
+        # 模型替换成整框重绘。模板匹配漏掉的实例（边缘裁切、弱相关副本）由
+        # 局部对比生长补回；补全的晕圈落在纸面上，由纸面色填平，无副作用。
+        base = mask.binary(thr.mask_alpha_min) > 0
+        lines = _lines(image, base)
+        if not lines:
+            return mask
+        height = float(np.median([ocr._geometry(box)[0] for box, _, _ in lines]))
+        domain = _search_domain(base.shape, lines)
+        seed = base & domain
+        region = _pixel_strokes(image, domain, seed, height,
+                                repeat_support=mask.repeat_stroke_support)
+        combined = base | region
+        return replace(mask, alpha=combined.astype(np.float32), footprint=combined,
+                       text_keepout=mask.text_keepout)
     base = mask.binary(thr.mask_alpha_min) > 0
     if not base.any():
         return mask

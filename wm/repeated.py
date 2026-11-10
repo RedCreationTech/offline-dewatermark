@@ -279,74 +279,132 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
             seeds.append(box)
     if not seeds:
         return None
-    box = max(seeds,key=lambda b:float(b[:,1].mean()))
-    x0,y0 = np.floor(box.min(0)).astype(int)-3
-    x1,y1 = np.ceil(box.max(0)).astype(int)+3
-    x0=max(0,x0-int((y1-y0)*(.3 if document else 1.5)));x1=min(rw,x1+int((y1-y0)*.3))
-    y0=max(0,y0);y1=min(rh,y1)
-    th,tw=y1-y0,x1-x0
-    if th<8 or tw<40 or tw>rw or th>rh:
-        return None
     gray=rotated.mean(2).astype(np.uint8)
-    size=max(5,int(ocr._geometry(box)[0]*.5)+1)|1
+    reference=max(seeds,key=lambda b:float(b[:,1].mean()))
+    size=max(5,int(ocr._geometry(reference)[0]*.5)+1)|1
     feature=cv2.morphologyEx(gray,cv2.MORPH_BLACKHAT,np.ones((size,size),np.uint8)).astype(np.float32)
     feature=np.minimum(feature,150)
-    suffix=x0+int(tw*.5)
-    patch=feature[y0:y1,suffix:x1]
-    if patch.std()<5:
-        return None
-    matches=_peaks(cv2.matchTemplate(feature,patch,cv2.TM_CCOEFF_NORMED),patch.shape,.50)
-    peaks=[(x-(suffix-x0),y,s) for x,y,s in matches if x>=suffix-x0 and y+th<=rh and x-(suffix-x0)+tw<=rw]
-    if len(peaks)<2:
-        return None
-    patches=[]
-    luminance=[]
-    for x,y,_ in peaks:
-        patches.append(np.where(valid[y:y+th,x:x+tw],feature[y:y+th,x:x+tw],np.nan))
-        luminance.append(np.where(valid[y:y+th,x:x+tw],gray[y:y+th,x:x+tw],np.nan))
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore',RuntimeWarning)  # no observations outside rotated source
-        recurring=np.nan_to_num(np.nanpercentile(patches,0 if len(peaks)<3 else 25,axis=0))
-        light=np.nan_to_num(np.nanpercentile(luminance,90,axis=0),nan=255)
-    template=(recurring>30).astype(np.uint8)
+
+    def _window(b):
+        bx0,by0 = np.floor(b.min(0)).astype(int)-3
+        bx1,by1 = np.ceil(b.max(0)).astype(int)+3
+        bx0=max(0,bx0-int((by1-by0)*(.3 if document else 1.5)));bx1=min(rw,bx1+int((by1-by0)*.3))
+        by0=max(0,by0);by1=min(rh,by1)
+        return bx0,by0,bx1,by1
+
     if document:
-        template[np.isfinite(patches).sum(axis=0)<2]=0
-    if template.sum()<50:
+        windows=[_window(b) for b in seeds]
+        th=int(round(float(np.median([w[3]-w[1] for w in windows]))))
+        tw=int(round(float(np.median([w[2]-w[0] for w in windows]))))
+    else:
+        ref_win=_window(reference)
+        th,tw=ref_win[3]-ref_win[1],ref_win[2]-ref_win[0]
+    if th<8 or tw<40 or tw>rw or th>rh:
         return None
+    # 平铺文字多列时，单列模板只覆盖一条对角线（白底红字实测：峰上限放宽到
+    # 64 仍只有 13 峰、整列实例未处理）。文档页按旋转后 x 位置分列，各列分别
+    # 匹配、分别盖章后取并集；照片纹理维持原单模板行为，不改动照片路径。
+    if document and len(seeds)>1:
+        clusters=[]
+        for b in sorted(seeds,key=lambda b:float(b[:,0].mean())):
+            cx=float(b[:,0].mean())
+            for cl in clusters:
+                if abs(cx-float(np.mean([o[:,0].mean() for o in cl])))<0.75*tw:
+                    cl.append(b);break
+            else:
+                clusters.append([b])
+    else:
+        clusters=[[reference]]
+    column_boxes=[max(cl,key=lambda b:float(b[:,1].mean())) for cl in clusters]
+    max_th=max([_window(b)[3]-_window(b)[1] for b in column_boxes]+[th])
+    max_tw=max([_window(b)[2]-_window(b)[0] for b in column_boxes]+[tw])
+    # 照片路径保持原实现：在未填充的特征图上匹配（零填充黑边会改变页边
+    # 相关分数，core_008 织物页因此由"命中"变"拒收"）；文档页在填充图上
+    # 直接匹配，列模板尺寸不一，坐标即填充画布坐标。
+    feature_unpadded=feature
     # Extra canvas permits partial instances whose full word extends off-image.
-    feature=np.pad(feature,((th,th),(tw,tw)))
-    valid=np.pad(valid,((th,th),(tw,tw)))
-    peaks=[(x+tw,y+th,s) for x,y,s in peaks]
-    matrix[:,2]+=[tw,th]
-    partial=_partial_matches(feature,valid,template,peaks)
+    feature=np.pad(feature,((max_th,max_th),(max_tw,max_tw)))
+    valid=np.pad(valid,((max_th,max_th),(max_tw,max_tw)))
+    gray=np.pad(gray,((max_th,max_th),(max_tw,max_tw)))
+    matrix[:,2]+=[max_tw,max_th]
     field=np.zeros(valid.shape,np.float32)
     light_field=np.full(valid.shape,255,np.float32)
-    for x,y,_ in [*peaks,*partial]:
-        target=field[y:y+th,x:x+tw]
-        np.maximum(target,template,out=target)
-        light_field[y:y+th,x:x+tw]=np.minimum(light_field[y:y+th,x:x+tw],
-                                             np.where(template>0,light,255))
-    if document:
-        for x,y,tx,ty,patch in _fragments(feature,template,peaks):
-            ph,pw=patch.shape
-            np.maximum(field[y:y+ph,x:x+pw],patch,out=field[y:y+ph,x:x+pw])
-            values=np.where(patch>0,light[ty:ty+ph,tx:tx+pw],255)
-            np.minimum(light_field[y:y+ph,x:x+pw],values,out=light_field[y:y+ph,x:x+pw])
-        keepout = ocr.text_zones(img)
-        protected = (cv2.warpAffine(keepout.astype(np.uint8), matrix,
-                                   (valid.shape[1], valid.shape[0]),
-                                   flags=cv2.INTER_NEAREST) > 0) if keepout is not None else None
-        padded_light = np.pad(light, ((th, th), (th, th)), constant_values=255)
-        for x, y, tx, ty, patch in _edge_fragments(feature, valid, template, peaks, protected):
-            ph, pw = patch.shape
-            target = field[y:y+ph, x:x+pw]
-            np.maximum(target, patch, out=target)
-            values = np.where(patch > 0, padded_light[ty+th:ty+th+ph, tx+th:tx+th+pw], 255)
-            target_light = light_field[y:y+ph, x:x+pw]
-            np.minimum(target_light, values, out=target_light)
+    peaks=[]
+    multi_column=document and len(clusters)>1
+    for column_box in column_boxes:
+        bx0,by0,bx1,by1=_window(column_box)
+        thk,twk=by1-by0,bx1-bx0
+        suffix=bx0+int(twk*.5)
+        search=feature if document else feature_unpadded
+        px0,py0=(suffix+max_tw, by0+max_th) if document else (suffix, by0)
+        patch=search[py0:py0+thk, px0:px0+(bx1-suffix)]
+        if patch.std()<5:
+            continue
+        # Flat paper repeats are near-identical copies, so the correlation surface
+        # supports many more reliable peaks than photo textures; a low cap silently
+        # skips whole repeated rows (stamped field leaves unprocessed instances).
+        matches=_peaks(cv2.matchTemplate(search,patch,cv2.TM_CCOEFF_NORMED),patch.shape,.50,
+                       limit=64 if document else 12)
+        if document:
+            # 文档页各列只取列种子右侧的匹配：副本虽然近乎一致，左侧异相副本混入
+            # 会拉低百分位模板的配准质量（白底红字实测召回 98.6%→94.0%）；
+            # 左缘裁切实例由 _fragments 与 recall.expand 并集补全。
+            col_peaks=[(x-(suffix-bx0),y,s) for x,y,s in matches
+                       if x>=suffix+max_tw and y+thk<=rh+max_th and x-(suffix-bx0)+twk<=rw+max_tw]
+        else:
+            col_peaks=[(x+max_tw-(suffix-bx0),y+max_th,s) for x,y,s in matches
+                       if x>=suffix-bx0 and y+thk<=rh and x-(suffix-bx0)+twk<=rw]
+        if not col_peaks:
+            continue
+        patches=[]
+        luminance=[]
+        for x,y,_ in col_peaks:
+            patches.append(np.where(valid[y:y+thk,x:x+twk],feature[y:y+thk,x:x+twk],np.nan))
+            luminance.append(np.where(valid[y:y+thk,x:x+twk],gray[y:y+thk,x:x+twk],np.nan))
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore',RuntimeWarning)  # no observations outside rotated source
+            recurring=np.nan_to_num(np.nanpercentile(patches,0 if len(col_peaks)<3 else 25,axis=0))
+            light=np.nan_to_num(np.nanpercentile(luminance,90,axis=0),nan=255)
+        template=(recurring>30).astype(np.uint8)
+        if document:
+            template[np.isfinite(patches).sum(axis=0)<2]=0
+        if template.sum()<50:
+            continue
+        peaks.extend(col_peaks)
+        partial=_partial_matches(feature,valid,template,col_peaks) if len(col_peaks)>=2 else []
+        for x,y,_ in [*col_peaks,*partial]:
+            target=field[y:y+thk,x:x+twk]
+            np.maximum(target,template,out=target)
+            light_field[y:y+thk,x:x+twk]=np.minimum(light_field[y:y+thk,x:x+twk],
+                                                 np.where(template>0,light,255))
+        if document:
+            for x,y,tx,ty,frag in _fragments(feature,template,col_peaks):
+                ph,pw=frag.shape
+                np.maximum(field[y:y+ph,x:x+pw],frag,out=field[y:y+ph,x:x+pw])
+                values=np.where(frag>0,light[ty:ty+ph,tx:tx+pw],255)
+                np.minimum(light_field[y:y+ph,x:x+pw],values,out=light_field[y:y+ph,x:x+pw])
+            # 单列文档页保留原边缘补片行为；多列时各列模板/光照不同，边缘残字
+            # 交由 recall.expand 的并集补全（对齐戳印 _add_clipped）兜底。
+            if not multi_column:
+                keepout = ocr.text_zones(img)
+                protected = (cv2.warpAffine(keepout.astype(np.uint8), matrix,
+                                           (valid.shape[1], valid.shape[0]),
+                                           flags=cv2.INTER_NEAREST) > 0) if keepout is not None else None
+                padded_light = np.pad(light, ((thk, thk), (twk, twk)), constant_values=255)
+                for x, y, tx, ty, frag in _edge_fragments(feature, valid, template, col_peaks, protected):
+                    ph, pw = frag.shape
+                    target = field[y:y+ph, x:x+pw]
+                    np.maximum(target, frag, out=target)
+                    values = np.where(frag > 0, padded_light[ty+thk:ty+thk+ph, tx+twk:tx+twk+pw], 255)
+                    target_light = light_field[y:y+ph, x:x+pw]
+                    np.minimum(target_light, values, out=target_light)
+    if len(peaks)<2:
+        return None
     field*=valid
     coverage=cv2.warpAffine(field,cv2.invertAffineTransform(matrix),(w,h))
-    region=cv2.dilate((coverage>.15).astype(np.uint8),np.ones((3,3),np.uint8))>0
+    # 文档页选区同样覆盖笔画外 1–2px 的抗锯齿晕圈，避免修复后留空心轮廓。
+    region=cv2.dilate((coverage>(.10 if document else .15)).astype(np.uint8),
+                      np.ones((5,5) if document else (3,3),np.uint8))>0
     if not .0001<float(region.mean())<.20:
         return None
     confidence=float(min(p[2] for p in peaks))

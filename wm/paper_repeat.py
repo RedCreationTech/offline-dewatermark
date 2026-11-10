@@ -193,11 +193,13 @@ def estimate(img):
         np.maximum(field[y:y+ph,x:x+pw], patch, out=field[y:y+ph,x:x+pw])
     field *= valid
     coverage = cv2.warpAffine(field, cv2.invertAffineTransform(matrix), (w,h))
+    coverage = cv2.GaussianBlur(coverage, (0, 0), 1.2)
     # Soft coverage keeps antialiased stroke edges inside the invertible fit:
     # a hard binary template zeroes alpha exactly where the veil feathers out,
-    # which shows up as residual watermark at the glyph rims.
-    coverage = cv2.GaussianBlur(coverage, (0, 0), 1.2)
-    region = cv2.dilate((coverage>.03).astype(np.uint8), np.ones((5,5),np.uint8))>0
+    # which shows up as residual watermark at the glyph rims. 印章模板只抓住笔画
+    # 深色核心，真实抗锯齿晕圈在模板外约 1–2px；把选区再外扩 1px（总计约
+    # 3px），让纸面直填覆盖整条晕圈，避免清完内部后留下空心轮廓。
+    region = cv2.dilate((coverage>.03).astype(np.uint8), np.ones((7,7),np.uint8))>0
     if not .0001 < region.mean() < .15:
         return None
     samples = img[region & (gray>50)]
