@@ -45,29 +45,42 @@ class ExpandFallbackTests(unittest.TestCase):
         return MaskLayer(alpha.copy(), footprint=alpha > 0, confidence=.8,
                          method='photo_observed_repeats')
 
-    def _expand(self, base_alpha, located_alpha):
+    def _expand(self, base_alpha, align_result, invert_result):
         image = np.zeros((200, 300, 3), np.uint8)
         base = self._mask(base_alpha)
-        located = MaskLayer(located_alpha, footprint=located_alpha > 0,
-                            method='recall_repeated_strokes')
         with patch('wm.ocr.read_lines', return_value=[]), \
-             patch('wm.observed_text.repeated_photo', return_value=located):
+             patch('wm.repeat_alignment.align_with_peaks', return_value=align_result), \
+             patch('wm.repeat_alignment.complete_and_invert', return_value=invert_result):
             return recall.expand(image, base, Thresholds(watermark_recall_priority=True))
 
     def test_validated_completion_replaces(self):
         base_alpha = _block((200, 300), 10, 110)
-        located_alpha = base_alpha.copy()
-        result = self._expand(base_alpha, located_alpha)
+        region = base_alpha > 0
+        peaks = [(0, 0, 1.0), (120, 0, 1.0), (0, 120, 1.0)]
+        combined = base_alpha.copy()
+        inverse = base_alpha > 0
+        alpha_map = np.full((200, 300), .3, np.float32)
+        colour_map = np.zeros((200, 300, 3), np.float32)
+        result = self._expand(base_alpha, (region, peaks), (combined, inverse, alpha_map, colour_map))
         self.assertEqual(result.method, 'recall_repeated_strokes')
         self.assertIsNone(result.skip_reason)
+        np.testing.assert_array_equal(result.alpha, combined)
 
     def test_failed_validation_falls_back_and_marks(self):
         base_alpha = _block((200, 300), 10, 110)
-        located_alpha = _block((200, 300), 10, 69)   # 覆盖率不足
-        result = self._expand(base_alpha, located_alpha)
+        region = base_alpha > 0
+        peaks = [(0, 0, 1.0), (120, 0, 1.0), (0, 120, 1.0)]
+        result = self._expand(base_alpha, (region, peaks), (None, None, None, None))
         self.assertEqual(result.skip_reason, 'cannot_explain_base')
         self.assertEqual(result.method, 'photo_observed_repeats')   # base 保留
         np.testing.assert_array_equal(result.alpha, base_alpha)     # 未被替换
+
+    def test_no_alignment_falls_back_and_marks(self):
+        base_alpha = _block((200, 300), 10, 110)
+        result = self._expand(base_alpha, (None, []), (None, None, None, None))
+        self.assertEqual(result.skip_reason, 'cannot_explain_base')
+        self.assertEqual(result.method, 'photo_observed_repeats')
+        np.testing.assert_array_equal(result.alpha, base_alpha)
 
     def test_other_methods_untouched(self):
         image = np.zeros((200, 300, 3), np.uint8)

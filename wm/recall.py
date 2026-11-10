@@ -157,11 +157,9 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
     if mask.method in ('photo_observed_repeats', 'photo_complete_repeated_rows', 'repeated_oblique_text'):
         from . import observed_text, repeat_alignment
         region, peaks = repeat_alignment.align_with_peaks(image, base, ocr.read_lines(image) or [])
-        if region is None:
-            unconfirmed = observed_text._layer(np.zeros_like(base), 'recall_repeated_strokes')
-            unconfirmed.confidence = 0.
-            return unconfirmed
-        combined, inverse, alpha_map, colour_map = repeat_alignment.complete_and_invert(image, region, peaks)
+        combined = inverse = None
+        if region is not None:
+            combined, inverse, alpha_map, colour_map = repeat_alignment.complete_and_invert(image, region, peaks)
         if combined is not None and inverse is not None and inverse.any():
             # Check if the measured opacity needs significant clipping. If so, the
             # inverse model is unreliable and inpainting gives better results.
@@ -177,7 +175,11 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
             layer.veil_colour_map = colour_map
             layer.repair_mode = 'photo_repeat_inverse'
             return layer
-        return observed_text._layer(region, 'recall_repeated_strokes')
+        # 补全不成立（对齐无种子、拟合训练像素不足等）：保留原定位选区并如实
+        # 标记（V1.26 口径：不达标保留原定位）。原实现回退到对齐戳印子集，会把
+        # 原定位已验证的弱实例（如栅栏上的平铺文字）整片丢弃，见
+        # docs/提示词去水印典型问题记录_20261109.md 条目 #002。
+        return replace(mask, skip_reason='cannot_explain_base')
     lines = _lines(image, base)
     if not lines:
         return mask

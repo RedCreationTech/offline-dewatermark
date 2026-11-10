@@ -88,15 +88,17 @@ class RecallGeometryTests(unittest.TestCase):
         self.assertFalse(found[region == 0].any())
         self.assertIsNone(repeat_alignment.align(np.full_like(image, 230), seed, [(box, 'O8 1', .99)]))
 
-    def test_failed_repeat_alignment_clears_selection(self):
+    def test_failed_repeat_alignment_keeps_base_and_marks(self):
         image = np.full((80, 140, 3), 230, np.uint8)
         seed = np.zeros(image.shape[:2], bool)
         seed[20:24, 30:90] = True
         mask = MaskLayer(seed.astype(np.float32), method='repeated_oblique_text', footprint=seed)
         with patch('wm.ocr.read_lines', return_value=[]):
             found = recall.expand(image, mask, Thresholds())
-        self.assertFalse(found.binary().any())
-        self.assertFalse(found.footprint.any())
+        # 补全不成立：保留原定位选区并如实标记（cannot_explain_base 契约）。
+        self.assertTrue(found.binary().any())
+        np.testing.assert_array_equal(found.alpha, mask.alpha)
+        self.assertEqual(found.skip_reason, 'cannot_explain_base')
 
     def test_measured_texture_and_inverse_repairs_keep_their_physical_models(self):
         image = np.full((40, 60, 3), 180, np.uint8)
