@@ -6,11 +6,12 @@
 图片保留相对路径（AGENTS.md §8 对全量逐页明细的 base64 豁免；
 2026-11-05 起取消摘要报告，只保留明细报告，对外发送打包同轮目录压缩包）。
 
-口径（数据驱动，两份报告一致）：
-- 分档只看：运行错误、无水印对照是否误选改动、笔画召回率、非水印区误差。
-  问题较多 = 笔画召回率<30% 或 负例有改动 或 运行错误；
-  效果较好 = 召回率≥60% 且 非水印区误差≤1.0 且 评分完整；其余为 一般/待复核。
-- 多选背景不作为分档指标：它仍逐张显示在卡片上（绝对像素+占全图百分比），供目视参考。
+明细报告分档口径：
+- 分档只看两个指标：笔画召回率（水印笔画漏了多少）与选区精确率（选中的像素有多少真是水印）。
+  问题较多 = 召回率<50% 或 精确率<50% 或 负例有改动 或 运行错误；
+  效果较好 = 召回率≥80% 且 精确率≥70%；其余为 一般/待复核。
+  缺失评分保持未知，只有已测到低于门槛的指标才可判入问题较多。
+- 背景误差、多选像素、字洞误选不作为分档指标：仍逐张显示在卡片上（绝对像素+占全图百分比），供目视参考。
 - 术语浮层词表见 GLOSSARY（点击"?"弹白话解释，可收起）。
 
 调用：build_report(out_dir)；regression_control.write_report 在写出报告时调用。
@@ -42,7 +43,7 @@ GLOSSARY = {
     '均笔画召回率': '该类型所有页“笔画召回率”的平均值。笔画召回率＝选中的水印笔画像素 ÷ 全部水印笔画像素（含淡边缘），越高表示水印选得越全。',
     '均多选占比': '该类型所有页“多选背景占全图面积”的平均百分比。多选占比＝误选的非水印像素 ÷ 全图总像素，越高表示误伤背景/正文越多。',
     '均精确率': '该类型所有页“选区精确率”的平均值。精确率＝选区里真正属于水印的像素 ÷ 全部选中像素，越高表示选得越准、误伤越少。',
-    '问题较多占比': '该类型中被自动分进“问题较多”档的页数 ÷ 该类型总页数。分档只看运行错误、负例改动、笔画召回率、非水印区误差；多选背景不参与分档。',
+    '问题较多占比': '该类型中被自动分进“问题较多”档的页数 ÷ 该类型总页数。分档只看运行错误、负例改动、笔画召回率、选区精确率；背景误差与多选像素不参与分档。',
     'tonal': '修复通道名：按颜色/明暗连续调性（tonal）做修复的处理路径，适合渐变色、明暗渐变类水印。通道名是程序内部定位方式的标识。',
     '字洞': '字的内部空洞、被笔画圈死的缝隙。选区把它们也填上 = 糊成实心块，属于误伤的一种。',
     '选区占比': '选中像素占整张图的比例，衡量修复范围大小。',
@@ -59,17 +60,18 @@ GLOSSARY = {
     '观察基线': '当前状态的封存记录，包含既有缺陷；是新工作的对照基准，不代表质量合格。',
     '独立验证集': '从未参与调参的锁柜评测集，只在里程碑一次性查看；据其调参即降级。',
     '历次基线对比': '把每一轮封存的基线按时间排成一张表，横向对比三档页数、多选背景页数、平均召回率和较上轮的退化/优化数量，用于快速看每天测试结果的走向。',
-    '三档': '效果较好 / 一般·待复核 / 问题较多 三个自动初筛档位，由运行错误、负例改动、笔画召回率、非水印区误差决定；多选背景不参与分档。',
+    '三档': '效果较好 / 一般·待复核 / 问题较多 三个自动初筛档位，由运行错误、负例改动、笔画召回率、选区精确率决定（较好=召回≥80%且精确率≥70%；问题=任一低于50%）；背景误差与多选像素不参与分档。',
 }
 
-LOW_RECALL = 0.3
-GOOD_RECALL = 0.6
+LOW_RECALL = 0.5        # 分档：召回低于此值列入问题较多
+GOOD_RECALL = 0.8       # 分档：召回达到此值才有较好档资格
+LOW_PRECISION = 0.5     # 分档：精确率低于此值列入问题较多
+GOOD_PRECISION = 0.7    # 分档：精确率达到此值才有较好档资格
 BAD_FP_FRAC = 0.005     # 多选占比 0.5% 列入异常清单（不影响分档）
 GOOD_FP_FRAC = 0.002    # 多选占比 0.2%（fp 专页入口阈值）
 CMP_RECALL_TOL = 0.03   # 与上次基线对比：召回率差异 ≤3pp 视为持平
 CMP_MAE_TOL = 5.0       # 与上次基线对比：水印区误差差异 ≤5 视为持平
 BAD_FP_PX = 20000       # 绝对兜底：小图上 0.5% 太小时按 2 万像素判
-GOOD_BG_MAE = 1.0
 
 STYLE = """
 *{box-sizing:border-box}body{font:15px/1.75 system-ui,"PingFang SC","Microsoft YaHei",sans-serif;background:#f2f5f7;color:#243b46;margin:0;padding:26px}
@@ -203,17 +205,18 @@ def _enrich(r: dict) -> dict:
 
 
 def _grade(r: dict) -> str:
-    """由记录指标分档（纯数据驱动）。多选背景不作为分档指标——
-    它仍显示在每张卡片上，但不参与问题档/较好档判定，避免误伤效果好的样本。"""
+    """由记录指标分档（纯数据驱动）：只看笔画召回率与选区精确率两个指标。
+    召回率管“水印笔画漏了多少”，精确率管“选中的像素里有多少真是水印”。
+    背景误差、多选像素仍逐张显示在卡片上，但不参与分档。"""
     if r['status'] == 'error':
         return 'err'
     if r['negative']:
         return 'good' if not r.get('selected_pixels') and not r.get('changed_pixels') else 'bad'
-    if r.get('recall') is None:
-        return 'warn'
-    if r['recall'] < LOW_RECALL:
+    recall, precision = r.get('recall'), r.get('precision')
+    if ((recall is not None and recall < LOW_RECALL)
+            or (precision is not None and precision < LOW_PRECISION)):
         return 'bad'
-    if r['recall'] >= GOOD_RECALL and (r.get('background_mae') or 99) <= GOOD_BG_MAE:
+    if recall is not None and precision is not None and recall >= GOOD_RECALL and precision >= GOOD_PRECISION:
         return 'good'
     return 'warn'
 
@@ -360,6 +363,29 @@ def analyse(run: dict) -> dict:
                 inputs=len({r['id'] for r in recs}), styles=styles, style_label={})
 
 
+def style_display_names(cases: list[dict]) -> dict:
+    """样式键对应的中文名（结论区"问题最大的水印样式"和逐格标签缺失时的兜底），全部从清单推导，不写对照表。
+
+    清单只有逐格标签：合成集一格一个（"平铺文字水印·透明度组·极淡12%"），一个样式对应多个标签；
+    真实样本集通常一个样式只有一个标签，这时原样使用（"真实软件 PDF · 黑色"截掉后缀会丢区分信息）。
+    多个标签时取首段（分隔符"·"之前）作为样式名，首段唯一就直接用；首段不唯一就并列显示，
+    不能拿碰到的第一格标签冒充整个样式的名字。
+    """
+    labels: dict = {}
+    for c in cases:
+        style, own = c.get('style'), c.get('label')
+        if style and own and own != style:
+            labels.setdefault(style, set()).add(own)
+    names = {c['style']: c['style'] for c in cases if c.get('style')}
+    for style, values in labels.items():
+        if len(values) == 1:
+            names[style] = next(iter(values))
+            continue
+        heads = {v.split('·', 1)[0].strip() for v in values}
+        names[style] = sorted(heads)[0] if len(heads) == 1 else '、'.join(sorted(values))
+    return names
+
+
 def _style_cause(s: dict) -> str:
     """由聚合数字生成一句初步原因分析（规则启发式，标注为初步）。"""
     if s['errors']:
@@ -421,7 +447,12 @@ def conclusion_html(run: dict, a: dict) -> str:
         lines.append(f'运行错误 {len(a["errors"])} 页次，涉及 {len(ids)} 个输入（{"、".join(i.rsplit("/", 1)[-1] for i in ids[:3])}{" 等" if len(ids) > 3 else ""}）。')
     lines.append(f'无水印负例 {len(a["neg_safe"])} / {len(a["neg"])} 安全；平均耗时 {a["mean_elapsed"]:.1f} 秒/页。'
                  if a['mean_elapsed'] else f'无水印负例 {len(a["neg_safe"])} / {len(a["neg"])} 安全。')
-    head = '观察基线已建立：记录当前状态（含既有缺陷），作为以后新旧对照的基准。' if run.get('baseline_kind') else '本轮控制运行结果如下。'
+    if a.get('stratified_scope'):
+        head = '本轮记录分层合成样本的处理结果。'
+    elif complete and run.get('baseline_kind'):
+        head = '观察记录已封存，包含当时已知的缺陷。'
+    else:
+        head = '本轮控制运行结果如下。'
     banner = (f'<div class="banner {"good" if complete and not a["errors"] else "bad"}"><b>结论</b>　{esc(head)}<br>'
               + '<br>'.join('· ' + mark_terms(esc(x)) for x in lines) + '</div>')
 
@@ -537,6 +568,8 @@ def load_history(out: Path) -> list:
             continue
         try:
             run = json.loads((d / '运行记录.json').read_text())
+            if d != out and not run.get('complete'):
+                continue
             rounds.append(dict(dir=d, run=run, keymap={r['key']: r for r in run.get('records', []) if r.get('key')}))
         except Exception:
             continue
@@ -598,12 +631,13 @@ def history_html(out: Path) -> str:
             '<table><tr><th>轮次</th><th>页数</th><th>' + mark_terms('三档') + '·较好</th><th>一般</th><th>问题</th>'
             '<th>' + mark_terms('多选') + f'&gt;0.2% 页</th><th>' + mark_terms('均笔画召回率') + '</th><th>较上一轮（同键配对）</th></tr>'
             + ''.join(body) + '</table>'
-            '<p class="muted">口径说明：三档页数含无水印对照（较好档内单列）；“较上一轮”按 输入＋页码 与上一时间轮封存配对，'
+            '<p class="muted">三档页数按本页规则汇总，含无水印对照（较好档内单列）。历史报告保留生成时的分档。'
+            '“较上一轮”按输入＋页码与上一时间轮封存配对，'
             '旧三轮封存的另两种模式不参与；退化/优化判定容差与页首对比一致（召回 ±3pp、误差 ±5）。'
             '各轮是各自当时的代码与环境，对比只看走向，不单独归因某次改动。</p></details>')
 
 
-def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
+def build_detail(out: Path, run: dict, a: dict, moment: str, manifest: dict) -> Path:
     """明细报告：完全复用《效果分档总览》版式（tools/assets 下的 CSS/JS），
     页首加结论区（测试规模 / 每种类型结果-桌面默认 / 问题最大样式与初步分析）。
     图片为相对路径（AGENTS.md §8 对全量逐页明细的 base64 豁免）。"""
@@ -614,17 +648,19 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
     # 返回总目录：封存报告在 out/项目防退化控制/<轮次>/ 下，深度两级，按实际路径算相对链接。
     import os
     index_path = out.parents[1] / '水印验证报告总目录.html'
-    back_href = quote(os.path.relpath(index_path, out), safe='/') if index_path.is_file() else quote(
-        os.path.relpath(out.parents[1], out), safe='/')
+    back_href = quote(os.path.relpath(index_path, out), safe='/')
+    back_link = (f'<a class="back" href="{back_href}">← 返回报告总目录</a>'
+                 if index_path.is_file() or out.parent.name == '项目防退化控制' else '')
 
     def rel(path: Path) -> str:
         return quote(str(Path(path).relative_to(out)), safe='/')
 
-    manifest = json.loads((out / '原始清单.json').read_text())
-    input_by_id = {c['id']: c['input'] for c in manifest['cases']}
-    style_label = {}
-    for c in manifest['cases']:
-        style_label.setdefault(c.get('style'), c.get('label') or c.get('style'))
+    frozen_manifest = out / '样本清单.json'
+    inputs = json.loads(frozen_manifest.read_text()) if frozen_manifest.is_file() else manifest
+    input_by_id = {c['id']: c['input'] for c in inputs['cases']}
+    style_label = style_display_names(manifest['cases'])
+    label_by_id = {c['id']: c['label'] for c in manifest['cases']
+                   if c.get('label') and c.get('label') != c.get('style')}
 
     def rel_input(r: dict) -> str:
         src = input_by_id.get(r['id'])
@@ -640,14 +676,16 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
         f = r.get('files') or {}
         reasons = []
         if r['status'] == 'error':
-            reasons.append('运行错误：' + str(r.get('error', '')).splitlines()[0][:120])
+            reasons.append('运行错误：' + str(r.get('error') or '').partition('\n')[0][:120])
         elif r['negative']:
             reasons.append('无水印且没有选区、没有改动，安全保留' if g == 'good' else '⚠ 无水印对照发生了改动/误选')
         else:
             if r.get('recall') is not None:
                 reasons.append(f'笔画召回率 {fmt_pct(r["recall"])}，明显笔画召回 {fmt_pct(r.get("strong_recall"))}')
             else:
-                reasons.append('没有有效评分（未检出或未通过评分条件）')
+                reasons.append('笔画召回率未评估')
+            if r.get('precision') is None:
+                reasons.append('选区精确率未评估')
             fp = r.get('false_positive_pixels')
             if fp is not None:
                 reasons.append(f'多选背景 {fp:,}px' + (f'（占全图 {r["_fp_frac"] * 100:.2f}%）' if r['_fp_frac'] is not None else ''))
@@ -663,7 +701,8 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
                 reasons.append('较上次基线：发生退化（无召回数据，见误差指标）')
         rows.append(dict(key=r['key'], id=r['id'], page=r['page'], mode=r['mode'], status=r['status'],
                          input_sha256=r.get('input_sha256'), style=r.get('style') or '未标注',
-                         label=style_label.get(r.get('style')), group=r['group'], negative=r['negative'],
+                         label=label_by_id.get(r['id']) or style_label.get(r.get('style')),
+                         group=r['group'], negative=r['negative'],
                          bucket=bucket, reasons=reasons,
                          recall=r.get('recall'), precision=r.get('precision'), strong_recall=r.get('strong_recall'),
                          missed_pixels=r.get('missed_pixels'), false_positive_pixels=r.get('false_positive_pixels'),
@@ -701,8 +740,11 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
         counts[m].setdefault('poor', 0)
         negative_counts.setdefault(m, 0)
     import hashlib as _hl
+    sources = dict(original_records='运行记录.json', inventory='原始清单.json')
+    if (out / '验收规则.json').is_file():
+        sources['rules'] = '验收规则.json'
     payload = dict(rows=rows, counts=counts, negative_counts=negative_counts,
-                   sources=dict(original_records='运行记录.json', inventory='原始清单.json', rules='验收规则.json'),
+                   sources=sources,
                    manifest=dict(created_at=datetime.now().astimezone().isoformat(timespec='seconds'),
                                  source_completed_at=run.get('completed_at'),
                                  source_record_sha256=_hl.sha256((out / '运行记录.json').read_bytes()).hexdigest(),
@@ -758,39 +800,40 @@ def build_detail(out: Path, run: dict, a: dict, moment: str) -> Path:
 .hist-style summary {{font-size:13px;color:#176a4d;cursor:pointer}}
 .hist-style table {{font-size:12.5px}}
 </style></head><body><main class="shell">
-<a class="back" href="{back_href}">← 返回报告总目录</a>
+{back_link}
 <div class="conclusion">
 <h1>项目防退化控制明细报告 <span style="font-size:15px;color:#7a8a94">{e(moment)}</span></h1>
 <p class="byline">来源：{e(run.get('completed_at') or run.get('created_at'))} 完成的控制运行 · 版式同《效果分档总览》</p>
 {conclusion_html(run, a)}
+{f'<p class="note">{e(a["stratified_scope"])}</p>' if a.get('stratified_scope') else ''}
 <p class="note">三档是自动指标初筛，不是验收结论；专业术语带 <i style="display:inline-block;width:14px;height:14px;line-height:14px;text-align:center;font-size:10px;font-style:normal;background:#b0761a;color:#fff;border-radius:50%">?</i> 的可点击看解释。对外发送请打包本目录压缩包（明细图片为相对路径）。</p>
 </div>
 {history_html(out)}
 <p class="notice"><strong>三档是自动指标初筛，尚未逐张人工验收。</strong>“效果较好”不等于全部内容恢复正确；像素误差减少不等于水印去除率。无水印对照默认隐藏，勾选后可查看；它们仍用于检查误删，不计作去水印成功。</p>
 {modebar_html}
 <nav class="tabs" role="tablist" aria-label="按去水印效果分类">
-<button id="tab-good" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="true" data-bucket="good"><span class="label">效果较好</span><span class="num" id="count-good">—</span><span class="small">指标初筛较好／无水印安全保留</span></button>
-<button id="tab-review" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="false" tabindex="-1" data-bucket="review"><span class="label">一般／待复核</span><span class="num" id="count-review">—</span><span class="small">有差异、证据不足或需要目视核对</span></button>
-<button id="tab-poor" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="false" tabindex="-1" data-bucket="poor"><span class="label">问题较多</span><span class="num" id="count-poor">—</span><span class="small">未有效处理、误差改善少或损伤风险</span></button>
+<button id="tab-good" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="true" data-bucket="good"><span class="label">效果较好</span><span class="num" id="count-good">—</span><span class="small">召回≥{GOOD_RECALL:.0%}且精确率≥{GOOD_PRECISION:.0%}／无水印安全保留</span></button>
+<button id="tab-review" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="false" tabindex="-1" data-bucket="review"><span class="label">一般／待复核</span><span class="num" id="count-review">—</span><span class="small">未达较好线或评分缺失，需目视核对</span></button>
+<button id="tab-poor" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="false" tabindex="-1" data-bucket="poor"><span class="label">问题较多</span><span class="num" id="count-poor">—</span><span class="small">低召回、低精确率或运行异常</span></button>
 <button id="tab-fp" class="tab" type="button" role="tab" aria-controls="effect-panel" aria-selected="false" tabindex="-1" data-bucket="fp"><span class="label">多选背景</span><span class="num" id="count-fp">—</span><span class="small">误伤检查：占比&gt;0.2%，按占比从大到小</span></button>
 {cmp_tabs}
 </nav>
 <section id="effect-panel" role="tabpanel" aria-labelledby="tab-good">
-<div class="filters"><input id="search" type="search" aria-label="搜索样本" placeholder="搜索样本、样式或归类原因…"><select id="style" aria-label="筛选水印样式"><option value="">全部样式</option></select><select id="group" aria-label="筛选样本来源"><option value="">全部来源</option></select><label><input id="duplicates" type="checkbox">显示重复批次记录</label><label><input id="negatives" type="checkbox">显示无水印对照（检查误删）</label></div>
-<p class="view-note" id="view-note" role="status" aria-live="polite"></p><div class="cards" id="cards"></div><div class="empty" id="empty" hidden>当前条件下没有图片，可切换档位、样式或清空搜索。</div>
+<div class="filters"><input id="search" type="search" aria-label="搜索样本" placeholder="搜索样本、样式或归类原因…"><select id="group" aria-label="筛选样本来源"><option value="">全部来源</option></select><label><input id="duplicates" type="checkbox">显示重复批次记录</label><label><input id="negatives" type="checkbox">显示无水印对照（检查误删）</label></div>
+<p class="view-note" id="view-note" role="status" aria-live="polite"></p><div class="cards" id="cards"></div><div class="empty" id="empty" hidden>当前条件下没有图片，可切换档位、来源或清空搜索。</div>
 <div class="pager"><button id="previous" type="button">上一页</button><span id="pagination"></span><button id="next" type="button">下一页</button></div>
 </section>
-<details class="methods"><summary>查看分档规则、统计和数据来源</summary>
-<h3>这是效果初筛，不是验收门槛</h3>
-<p>效果较好：笔画召回率≥60%、非水印区新增平均误差≤1.0，且评分完整；无水印且没有选区、没有改动的对照也放在本档并单独标注。</p>
-<p>问题较多：运行错误；或无水印对照发生误选／改动；或笔画召回率&lt;30%。其余与无法评估的记录放入一般／待复核。多选背景不作为分档指标，只逐张展示（绝对像素＋占全图百分比），供目视参考。</p>
+<section class="methods">
+<h3>分档规则、统计和数据来源</h3>
+<p>笔画召回率达到 {GOOD_RECALL:.0%} 且选区精确率达到 {GOOD_PRECISION:.0%} 的页进入效果较好档。无水印对照没有选区且没有改动时，也进入本档并单独标注。</p>
+<p>笔画召回率低于 {LOW_RECALL:.0%}、选区精确率低于 {LOW_PRECISION:.0%}、运行错误或无水印对照误选／改动，均归入问题较多。其余进入一般／待复核，包括评分缺失且已有评分未触发问题较多的页。背景误差与多选像素逐张展示。</p>
 <p>笔画召回的真值为 alpha&gt;0 的全部水印像素，不隐藏淡边缘。字间空白、实际水印残留和正文识别正确率尚未可靠评估；像素误差不等于残留率。</p>
 <h3>重复样本如何处理</h3>
 <p id="deduplication-note">默认按“输入文件哈希＋页码”合并，同图不同批次展示较差档。勾选“显示重复批次记录”可查看全部批次。PDF 与 JPG 属于不同输入。</p>
 {cmp_note}
 <div id="mode-summary"></div><div class="sources" id="sources"></div>
 <p>这些数据来自开发、回归和历史样本，没有新的独立泛化验证；基线轮记录当时表现（含既有缺陷），不代表质量合格。原始封存文件未修改，本页分档规则只用于阅读，不改变防退化验收规则。</p>
-</details>
+</section>
 <footer>所有图片均来自实际输入、实际输出或已保存记录的评分后核对图。按图片逐张判断，不用平均分抵消坏图。</footer>
 </main>
 <dialog id="viewer"><div class="dialogbar"><span id="viewer-title"></span><a id="viewer-link" target="_blank" rel="noopener">打开原文件</a><button id="viewer-close" type="button">关闭</button></div><img id="viewer-image" alt="放大的实际测试图片"></dialog>
@@ -808,17 +851,15 @@ def build_report(out: Path) -> Path:
     out = Path(out).resolve()
     run = load_run(out)
     a = analyse(run)
-    # 样式中文名：取原始清单里每个样式的中文标签
-    try:
-        manifest = json.loads((out / '原始清单.json').read_text())
-        for c in manifest['cases']:
-            a['style_label'].setdefault(c.get('style'), c.get('label') or c.get('style'))
-    except Exception:
-        pass
+    # 样式中文名：从原始清单的逐格标签推导，和明细行"样式"列用同一套名字
+    manifest = json.loads((out / '原始清单.json').read_text())
+    cases = manifest['cases']
+    a['style_label'] = style_display_names(cases)
+    if cases and all(c.get('role') == 'stratified_synthetic_capability' for c in cases):
+        a['stratified_scope'] = manifest.get('note')
     a['style_label'].setdefault(None, '未标注')
     # 与上次基线对比（参考包在封存目录里才启用）
     ref_label, ref_map = load_reference(out)
-    a['ref_label'] = ref_label
     cmp_counts = {'better': 0, 'worse': 0, 'same': 0, 'unpaired': 0}
     for r in a['recs']:
         ref_row = ref_map.get(r['key']) if ref_map else None
@@ -828,12 +869,13 @@ def build_report(out: Path) -> Path:
         r['_old_recall'] = (ref_row or {}).get('recall')
         cmp_counts[cmp_ if cmp_ in ('better', 'worse', 'same') else 'unpaired'] += 1
     a['cmp_counts'] = cmp_counts
+    a['ref_label'] = ref_label if any(cmp_counts[k] for k in ('better', 'worse', 'same')) else None
     moment = run_moment(run)
     stamp = moment.replace('-', '').replace(' ', '_').replace(':', '')
     if (out / f'项目防退化控制明细报告_{stamp}.html').exists():
         # 目标报告已封存不可覆盖：用本次生成时间做新版本名（取自当前运行，不手填）。
         moment = datetime.now().astimezone().strftime('%Y-%m-%d %H:%M')
-    return build_detail(out, run, a, moment)
+    return build_detail(out, run, a, moment, manifest)
 
 
 if __name__ == '__main__':

@@ -139,7 +139,8 @@ def prepare(out, inventory, scope, selection_plan=None):
                profiles=settings, expected_keys=expected, records=[], complete=False,
                integrity_verified=False, runtime_identity=identity, model_files=model_files,
                code_hashes=code_hashes, completed_jobs=[], independent_validation=False,
-               baseline_kind='当前观察基线；包含既有缺陷，不代表质量合格',
+               baseline_kind=(None if scope == 'stratified' else
+                              '当前观察基线；包含既有缺陷，不代表质量合格'),
                git_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                git_status=subprocess.check_output(['git', 'status', '--short'], cwd=ROOT, text=True),
                note='输入和参考已复制冻结；仅原图进入独立推理进程。运行失败与超时不删样本。')
@@ -346,13 +347,12 @@ def verified_run(out):
 def write_report(out, run, old=None, gate=None):
     # 固定模板明细报告（tab/搜索，本地逐张核查）。
     # 旧版《项目防退化控制报告.html》与摘要报告已退役：明细报告覆盖其全部用途。
-    # 只新增文件、不改封存件；失败不阻断主流程。
+    # 封存前只保留一份当前报告；失败不阻断主流程。
     try:
-        if not run.get('complete'):
-            # 运行未封存前，报告只是过程工作文件：先删旧版再重写，
-            # 避免逐批各产生一个新版本文件（历史上每批一版、一轮堆积几十份）。
-            for prev in out.glob('项目防退化控制明细报告_*.html'):
-                prev.unlink()
+        if (out / '封存校验.json').exists():
+            return
+        for prev in out.glob('项目防退化控制明细报告_*.html'):
+            prev.unlink()
         detail = build_control_report(out)
         print(f'报告已生成：{detail}', flush=True)
     except Exception as exc:

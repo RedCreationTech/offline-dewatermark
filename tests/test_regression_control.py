@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from tools.build_control_reports import _grade
 from tools.regression_guard import apply_reviews, compare_page, compare_runs
 from tools.regression_control import save, seal, verified_run, verify_frozen
 
@@ -29,6 +30,32 @@ def run():
                 profiles={m: {} for m in POLICY['required_modes']}, records=rows,
                 expected_keys=[r['key'] for r in rows], complete=True, integrity_verified=True,
                 runtime_identity={'models': 'frozen'})
+
+
+class ReportGradeTests(unittest.TestCase):
+    def test_report_grade_thresholds_and_missing_scores(self):
+        for recall, precision, expected in (
+            (.8, .7, 'good'),
+            (.79, .7, 'warn'),
+            (.8, .69, 'warn'),
+            (.5, .5, 'warn'),
+            (.49, .9, 'bad'),
+            (.9, .49, 'bad'),
+            (.9, None, 'warn'),
+            (None, .49, 'bad'),
+            (.9, 0, 'bad'),
+            (.49, None, 'bad'),
+        ):
+            with self.subTest(recall=recall, precision=precision):
+                record = page() | dict(recall=recall, precision=precision, background_mae=20)
+                self.assertEqual(_grade(record), expected)
+
+    def test_report_grades_failures_and_negative_controls(self):
+        safe = page() | dict(negative=True, selected_pixels=0, changed_pixels=0)
+        self.assertEqual(_grade(safe), 'good')
+        self.assertEqual(_grade(safe | dict(selected_pixels=1)), 'bad')
+        self.assertEqual(_grade(safe | dict(changed_pixels=1)), 'bad')
+        self.assertEqual(_grade(safe | dict(status='error')), 'err')
 
 
 class GuardTests(unittest.TestCase):

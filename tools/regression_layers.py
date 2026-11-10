@@ -108,7 +108,8 @@ def selected_cases(inventory, run):
     if plan:
         names = {name for selected in plan['mode_case_ids'].values() for name in selected}
         return [r for r in inventory['cases'] if r['id'] in names]
-    return [r for r in inventory['cases'] if run['scope'] == 'all' or r['group'] == '01_快速20张']
+    return [r for r in inventory['cases']
+            if run['scope'] in ('all', 'stratified') or r['group'] == '01_快速20张']
 
 
 def jobs_for(inventory, run):

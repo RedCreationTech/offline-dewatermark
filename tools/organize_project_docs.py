@@ -112,7 +112,7 @@ def facts():
 
 def tool_catalog():
     daily = {'daily_check.py', 'regression_control.py', 'regression_guard.py', 'regression_layers.py', 'regression_retirements.py', 'control_inventory.py', 'control_worker.py', 'run_min_regression.py', 'verify_control_chain.py'}
-    docs = {'organize_project_docs.py', 'build_report_index.py', 'build_effect_overview.py', 'build_single_flow_demo.py', 'build_watermark_review.py', 'sync_real_training_docs.py', 'update_failure_cases_from_baseline.py'}
+    docs = {'organize_project_docs.py', 'build_report_index.py', 'build_single_flow_demo.py', 'build_watermark_review.py', 'sync_real_training_docs.py', 'update_failure_cases_from_baseline.py'}
     catalog = []
     for p in sorted((ROOT / 'tools').iterdir()):
         if not p.is_file() or p.suffix not in {'.py', '.mjs', '.js', '.css', '.txt'}:
