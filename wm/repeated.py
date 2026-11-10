@@ -160,15 +160,29 @@ def _edge_fragments(feature, valid, template, peaks, protected=None):
 
 
 def _document_overlay(img, region, profile, confidence, allow_broad_ink: bool = False,
-                      coverage_hint: np.ndarray | None = None):
+                      coverage_hint: np.ndarray | None = None,
+                      allow_single_pole: bool = False):
     """Fit covered-paper and covered-ink poles from THIS document only.
 
     The repeated shape supplies alpha at text intersections. Elsewhere white
     paper directly measures attenuation. Refuse the fit without both poles.
+
+    With ``allow_single_pole`` (watermark-only pages: no body ink anywhere),
+    the covered-ink pole is unattainable by construction and unnecessary — the
+    inverse B=(I-β·t)/(1-β·(1-s)) restores paper identically for any (s,t)
+    on the line s·paper+t=covered. Fall back to a per-channel single-pole
+    (s=.5, t=covered-.5·paper) so chromatic stamps unmix per channel.
     """
     keepout=ocr.text_zones(img)
-    if keepout is None or not keepout.any():
+    if keepout is None:
         return None
+    if not keepout.any():
+        # 整页无直立正文墨迹（如整页只有斜向水印）：keepout 为空。仅当调用方
+        # 显式允许无交叠单极拟合时才继续——此时 keepout 不再参与极值估计，
+        # alpha 由 measured 全区域给出，正文保护由修复侧的深色核心保护兜底。
+        if not allow_single_pole:
+            return None
+        keepout = np.zeros(img.shape[:2], bool)
     gray=img.mean(2)
     paper=float(np.percentile(gray,97))
     estimated = np.clip(coverage_hint, 0, 1) if coverage_hint is not None else None
@@ -178,10 +192,12 @@ def _document_overlay(img, region, profile, confidence, allow_broad_ink: bool = 
     # Estimate the covered-paper pole on template-covered pixels only: the
     # whole region is mostly clean paper, so its near-white antialiasing can
     # otherwise outvote the actual veil pole (measured on layered samples).
-    pool = gray[region & ~keepout & (estimated > .5)] if estimated is not None \
-        else gray[region & ~keepout]
+    pool_mask = region & ~keepout & (estimated > .5) if estimated is not None \
+        else region & ~keepout
+    pool = gray[pool_mask]
     if pool.size < 200:
-        pool = gray[region & ~keepout]
+        pool_mask = region & ~keepout
+        pool = gray[pool_mask]
     histogram,_=np.histogram(pool,bins=edges)
     histogram[(edges[:-1]<.16*paper)|(edges[:-1]>clean_peak-12)]=0
     if histogram.max()<20:
@@ -210,7 +226,29 @@ def _document_overlay(img, region, profile, confidence, allow_broad_ink: bool = 
                 if .08 < s_fit < .85 and 0 <= t_fit < covered:
                     transmittance, ink = float(s_fit), float(t_fit)
                     covered_ink_level = s_fit * body_ink + t_fit
-    if transmittance is None:
+    single_pole_rgb = None
+    if transmittance is None and allow_single_pole and body_pool.size < 50:
+        # 无正文墨迹页面：覆盖墨极在构造上不可得也不需要（反解对纸面像素
+        # 恒等还原）。逐通道拟合"纸面极+覆盖纸极"，s 取 0.5，t 落在约束线。
+        pool_rgb = img[pool_mask].reshape(-1, 3)
+        if pool_rgb.shape[0] >= 200:
+            paper_rgb = np.percentile(img.reshape(-1, 3), 97, axis=0)
+            clean_rgb = np.percentile(img.reshape(-1, 3), 97, axis=0)
+            s_rgb = np.full(3, .5, np.float32)
+            t_rgb = np.zeros(3, np.float32)
+            ok = True
+            for c in range(3):
+                hist_c, _ = np.histogram(pool_rgb[:, c], bins=edges)
+                hist_c[(edges[:-1] < .16 * paper_rgb[c]) | (edges[:-1] > clean_rgb[c] - 12)] = 0
+                if hist_c.max() < 20:
+                    ok = False
+                    break
+                t_rgb[c] = float(edges[np.argmax(hist_c)] + 1) - .5 * paper_rgb[c]
+            contrast = paper_rgb - (.5 * paper_rgb + t_rgb)
+            if ok and float(np.min(contrast)) >= 12. and .08 < float(np.min(s_rgb)) \
+                    and float(np.max(.5 * paper_rgb + t_rgb)) < 250.:
+                single_pole_rgb = (s_rgb, t_rgb)
+    if transmittance is None and single_pole_rgb is None:
         ink_pixels=gray[region & keepout & (estimated>.7) &
                         (gray>.05*paper) & (gray<.65*covered)]
         # The lower tail estimates black glyph cores, rather than the numerous
@@ -218,16 +256,21 @@ def _document_overlay(img, region, profile, confidence, allow_broad_ink: bool = 
         percentile = 10
         if ink_pixels.size < 20 and allow_broad_ink:
             broad = gray[region & keepout & (estimated > .5)]
-            if broad.size < 50:
-                return None
-            ink_pixels = broad
-            percentile = 5
-        if ink_pixels.size < 20:
-            return None
-        ink = float(np.percentile(ink_pixels, percentile))
-        transmittance = (covered - ink) / paper
-        if not .08 < transmittance < .85:
-            return None
+            if broad.size >= 50:
+                ink_pixels = broad
+                percentile = 5
+        if ink_pixels.size >= 20:
+            ink = float(np.percentile(ink_pixels, percentile))
+            transmittance = (covered - ink) / paper
+            if not .08 < transmittance < .85:
+                transmittance = ink = None
+    if transmittance is None and single_pole_rgb is None:
+        return None
+    if transmittance is None:
+        veil_strength, veil_offset = single_pole_rgb
+    else:
+        veil_strength = np.full(3, transmittance, np.float32)
+        veil_offset = np.full(3, ink, np.float32)
     measured=np.clip((paper-gray)/max(paper-covered,1),0,1)
     # Undo the mild interpolation attenuation of the registered template; never
     # infer underlying glyph edges from their darkness alone. Inside the OCR
@@ -237,14 +280,19 @@ def _document_overlay(img, region, profile, confidence, allow_broad_ink: bool = 
     alpha=np.where(keepout,
                    np.where(estimated >= .15, measured, 0),
                    measured)
-    if covered_ink_level is not None and transmittance < 0.4:
+    if not keepout.any() and estimated is not None:
+        # 无正文页面：没有需要防误伤的正文，抗锯齿晕圈本身就是待清水印；
+        # 反解在 s=.5 单极下对纸面底层恒等饱和到纸面色，选区直接取整片
+        # 印章覆盖区，保证掩码覆盖整条晕圈、与整框路径的口径可比。
+        alpha = np.where(region, 1., 0.)
+    if covered_ink_level is not None and transmittance is not None and transmittance < 0.4:
         # Heavy veils only: pixels darker than any veil-covered text can be
         # are clean body ink and must not enter the noisy inverse.
         alpha = np.where(keepout & (gray < covered_ink_level - 5), 0, alpha)
     alpha=np.where(region,alpha,0).astype(np.float32)
     return MaskLayer(alpha=alpha,source=MaskSource.PRIOR,confidence=confidence,
-                     veil_strength=np.full(3,transmittance,np.float32),
-                     veil_offset=np.full(3,ink,np.float32),
+                     veil_strength=veil_strength,
+                     veil_offset=veil_offset,
                      paper=np.full(img.shape,paper,np.float32),footprint=region,
                      repair_mode='document_overlay_full' if coverage_hint is not None else 'document_overlay',
                      method='repeated_document_overlay',
@@ -279,6 +327,7 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
             seeds.append(box)
     if not seeds:
         return None
+    median_line_h = float(np.median([ocr._geometry(b)[0] for b in seeds]))
     gray=rotated.mean(2).astype(np.uint8)
     reference=max(seeds,key=lambda b:float(b[:,1].mean()))
     size=max(5,int(ocr._geometry(reference)[0]*.5)+1)|1
@@ -335,40 +384,57 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
         bx0,by0,bx1,by1=_window(column_box)
         thk,twk=by1-by0,bx1-bx0
         suffix=bx0+int(twk*.5)
-        search=feature if document else feature_unpadded
         px0,py0=(suffix+max_tw, by0+max_th) if document else (suffix, by0)
-        patch=search[py0:py0+thk, px0:px0+(bx1-suffix)]
-        if patch.std()<5:
-            continue
-        # Flat paper repeats are near-identical copies, so the correlation surface
-        # supports many more reliable peaks than photo textures; a low cap silently
-        # skips whole repeated rows (stamped field leaves unprocessed instances).
-        matches=_peaks(cv2.matchTemplate(search,patch,cv2.TM_CCOEFF_NORMED),patch.shape,.50,
-                       limit=64 if document else 12)
-        if document:
-            # 文档页各列只取列种子右侧的匹配：副本虽然近乎一致，左侧异相副本混入
-            # 会拉低百分位模板的配准质量（白底红字实测召回 98.6%→94.0%）；
-            # 左缘裁切实例由 _fragments 与 recall.expand 并集补全。
-            col_peaks=[(x-(suffix-bx0),y,s) for x,y,s in matches
-                       if x>=suffix+max_tw and y+thk<=rh+max_th and x-(suffix-bx0)+twk<=rw+max_tw]
-        else:
-            col_peaks=[(x+max_tw-(suffix-bx0),y+max_th,s) for x,y,s in matches
-                       if x>=suffix-bx0 and y+thk<=rh and x-(suffix-bx0)+twk<=rw]
-        if not col_peaks:
-            continue
-        patches=[]
-        luminance=[]
-        for x,y,_ in col_peaks:
-            patches.append(np.where(valid[y:y+thk,x:x+twk],feature[y:y+thk,x:x+twk],np.nan))
-            luminance.append(np.where(valid[y:y+thk,x:x+twk],gray[y:y+thk,x:x+twk],np.nan))
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore',RuntimeWarning)  # no observations outside rotated source
-            recurring=np.nan_to_num(np.nanpercentile(patches,0 if len(col_peaks)<3 else 25,axis=0))
-            light=np.nan_to_num(np.nanpercentile(luminance,90,axis=0),nan=255)
-        template=(recurring>30).astype(np.uint8)
-        if document:
-            template[np.isfinite(patches).sum(axis=0)<2]=0
-        if template.sum()<50:
+        half=bx1-suffix
+        # 淡印章/彩色印章若黑帽响应弱会在此自然失败并回退其他路径；实测用
+        # 4× 反相增强特征重试会引入配准漂移（浅黄残留 2,554→13,234），不采用。
+        attempts=((feature if document else feature_unpadded,False),)
+        col_peaks=None
+        template=light=None
+        for search,is_enh in attempts:
+            patch=search[py0:py0+thk, px0:px0+half]
+            if patch.std()<5:
+                continue
+            # Flat paper repeats are near-identical copies, so the correlation surface
+            # supports many more reliable peaks than photo textures; a low cap silently
+            # skips whole repeated rows (stamped field leaves unprocessed instances).
+            matches=_peaks(cv2.matchTemplate(search,patch,cv2.TM_CCOEFF_NORMED),patch.shape,.50,
+                           limit=64 if document else 12)
+            if document:
+                # 文档页各列只取列种子右侧的匹配：副本虽然近乎一致，左侧异相副本混入
+                # 会拉低百分位模板的配准质量（白底红字实测召回 98.6%→94.0%）；
+                # 左缘裁切实例由 _fragments 与 recall.expand 并集补全。
+                cand=[(x-(suffix-bx0),y,s) for x,y,s in matches
+                      if x>=suffix+max_tw and y+thk<=rh+max_th and x-(suffix-bx0)+twk<=rw+max_tw]
+            else:
+                cand=[(x+max_tw-(suffix-bx0),y+max_th,s) for x,y,s in matches
+                      if x>=suffix-bx0 and y+thk<=rh and x-(suffix-bx0)+twk<=rw]
+            if not cand:
+                continue
+            patches=[]
+            luminance=[]
+            for x,y,_ in cand:
+                # 峰坐标统一为填充画布坐标（照片路径已加 max_tw/max_th 偏移），
+                # 模板补丁一律从填充后的 feature 裁取；matchTemplate 用的 search
+                # 在照片路径是未填充图，不能用于裁补丁。
+                patches.append(np.where(valid[y:y+thk,x:x+twk],feature[y:y+thk,x:x+twk],np.nan))
+                luminance.append(np.where(valid[y:y+thk,x:x+twk],gray[y:y+thk,x:x+twk],np.nan))
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore',RuntimeWarning)  # no observations outside rotated source
+                recurring=np.nan_to_num(np.nanpercentile(patches,0 if len(cand)<3 else 25,axis=0))
+                light_k=np.nan_to_num(np.nanpercentile(luminance,90,axis=0),nan=255)
+            if is_enh:
+                # 增强图为反相（笔画暗、纸面亮），按低值取模板。
+                template_k=(recurring<200).astype(np.uint8)
+            else:
+                template_k=(recurring>30).astype(np.uint8)
+            if document:
+                template_k[np.isfinite(patches).sum(axis=0)<2]=0
+            if template_k.sum()<50:
+                continue
+            col_peaks,template,light=cand,template_k,light_k
+            break
+        if col_peaks is None:
             continue
         peaks.extend(col_peaks)
         partial=_partial_matches(feature,valid,template,col_peaks) if len(col_peaks)>=2 else []
@@ -411,7 +477,11 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     if document:
         profile=cv2.warpAffine(light_field,cv2.invertAffineTransform(matrix),(w,h),
                                borderValue=255)
-        fitted=_document_overlay(img,region,profile,confidence,coverage_hint=coverage)
+        # 无交叠单极拟合只在大字（OCR 行高中位数≥48px）启用：小字（28/40px
+        # 实测）覆盖区由边缘抗锯齿主导，直方图极不稳，反解欠校正（小字28
+        # 残留 65→24,031、小字40 残留 1,053→37,877）；小字页保留原有路径。
+        fitted=_document_overlay(img,region,profile,confidence,coverage_hint=coverage,
+                                 allow_single_pole=median_line_h >= 48)
         if fitted is not None:
             return fitted
     # On white documents retain existing dark ink instead of asking a generic

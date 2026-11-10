@@ -141,17 +141,20 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         return mask
     # Keep validated numerical alpha and the corresponding inverse. A search
     # pass must never replace a measured background model with a box inpainter.
+    single_pole_overlay = (mask.repair_mode in ('document_overlay', 'document_overlay_full')
+                           and mask.text_keepout is not None and not mask.text_keepout.any())
     if mask.repair_mode in ('texture_overlay', 'photo_repeat_inverse',
                             'coloured_document_overlay', 'document_overlay_full',
-                            'periodic_paper_overlay'):
+                            'periodic_paper_overlay') and not single_pole_overlay:
         return replace(mask, footprint=mask.binary(thr.mask_alpha_min) > 0)
     if mask.method in ('single_periodic_overlay', 'single_periodic_document'):
         return mask
-    if mask.repair_mode == 'paper_repeat_cleanup':
-        # 纸面重复文字图层已带实测 paper/veil 模型与正文保护区，清理是纸面
-        # 直填而非 LaMa；笔画补全只能作当前图对比证据的并集补全，不得把实测
-        # 模型替换成整框重绘。模板匹配漏掉的实例（边缘裁切、弱相关副本）由
-        # 局部对比生长补回；补全的晕圈落在纸面上，由纸面色填平，无副作用。
+    if mask.repair_mode == 'paper_repeat_cleanup' or single_pole_overlay:
+        # 纸面重复文字与无交叠单极反解图层都带实测 paper/veil 模型；清理是
+        # 纸面直填/代数反解而非 LaMa。笔画补全只能作当前图对比证据的并集补全，
+        # 不得把实测模型替换成整框重绘。模板匹配漏掉的实例（边缘裁切、弱相关
+        # 副本、错相位整行）由局部对比生长补回；晕圈落在纸面上，由纸面色填平
+        # 或反解饱和到纸面色，无副作用。覆盖墨极拟合的正文页保持原有保护行为。
         base = mask.binary(thr.mask_alpha_min) > 0
         lines = _lines(image, base)
         if not lines:

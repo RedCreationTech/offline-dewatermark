@@ -26,8 +26,8 @@ SERVER_SCRIPT = ROOT / "tools" / "wevisone_server.py"
 VENV_PYTHON = ROOT / "out" / "third_party" / "WeVisOne-VL" / ".venv" / "Scripts" / "python.exe"
 LOG_FILE = ROOT / "out" / "wevisone_service.log"
 DEFAULT_MODEL = os.environ.get("WM_WEVISONE_MODEL", "models/WeVisOne-VL-2B")
-SEGMENT_TIMEOUT_S = 120  # 设计 Q11：单页调用超时
-START_TIMEOUT_S = 300    # 冷启动含模型加载
+SEGMENT_TIMEOUT_S = int(os.environ.get("WM_WEVISONE_TIMEOUT_S", "120"))  # 设计 Q11：单页调用超时
+START_TIMEOUT_S = int(os.environ.get("WM_WEVISONE_START_TIMEOUT_S", "300"))  # 冷启动含模型加载
 
 
 class ServiceError(RuntimeError):

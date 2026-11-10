@@ -102,7 +102,8 @@ def record_page(folder: Path, page, result: PageResult | None, error: str | None
     return rec
 
 
-def run_batch(input_dir: Path, out_dir: Path, name: str | None, recursive: bool) -> dict:
+def run_batch(input_dir: Path, out_dir: Path, name: str | None, recursive: bool,
+              mode: str = "auto", prompt: str | None = None) -> dict:
     images = collect_images(input_dir, recursive)
     if not images:
         raise SystemExit(f"目录中没有可处理图片：{input_dir}")
@@ -110,13 +111,14 @@ def run_batch(input_dir: Path, out_dir: Path, name: str | None, recursive: bool)
     # 与桌面 GUI 相同：一批手工挑选的同水印图片 → 共享跨页先验。
     pages = documents.load_many(images, dpi=200)
     batch = Batch(name or input_dir.name, pages)
-    batch.detection_mode = "auto"  # 找水印方式：自动识别（GUI 默认）
+    batch.detection_mode = mode  # 找水印方式：auto＝自动识别；prompt＝提示词定位
+    if mode == "prompt":
+        if not prompt:
+            raise SystemExit("提示词模式需要 --prompt")
+        batch.prompt_query = prompt
+        batch.prompt_treatment = "strokes"  # 按笔画（GUI 默认）
 
     make_app()  # 与 GUI 同一 Qt 环境；worker 同步执行，不开事件循环
-
-    indices = list(range(len(pages)))
-    job = (batch, indices, GUI_DEFAULTS, GUI_CLOSE_PX, True, batch.style)
-    worker = BatchWorker([job], None, record_batch_timing=True)
 
     pages_dir = out_dir / "pages"
     records: list[dict] = []
@@ -134,11 +136,27 @@ def run_batch(input_dir: Path, out_dir: Path, name: str | None, recursive: bool)
         except Exception as exc:  # 单页落盘失败不拖垮整批
             errors.append(f"{page.doc_id}: {exc}")
 
-    worker.update.connect(on_event)
-
     frozen = code_snapshot()
     started = time.perf_counter()
-    worker.run()
+    if mode == "prompt":
+        # 本机 8GB 显存下常驻服务跨页累积分配会 OOM（实测前 12 页连续失败、
+        # 每页独立服务则稳定成功）：提示词模式逐页启停模型服务，每页独立进程。
+        from wm.wevisone_client import Service
+        if not Service.available():
+            raise SystemExit("提示词定位不可用：未找到 WeVisOne 环境（out/third_party/WeVisOne-VL）")
+        for index in range(len(pages)):
+            service = Service()
+            job = (batch, [index], GUI_DEFAULTS, GUI_CLOSE_PX, True, batch.style)
+            worker = BatchWorker([job], None, record_batch_timing=True, service=service)
+            worker.update.connect(on_event)
+            worker.run()
+            service.stop()
+    else:
+        indices = list(range(len(pages)))
+        job = (batch, indices, GUI_DEFAULTS, GUI_CLOSE_PX, True, batch.style)
+        worker = BatchWorker([job], None, record_batch_timing=True)
+        worker.update.connect(on_event)
+        worker.run()
     elapsed = time.perf_counter() - started
     if frozen != code_snapshot():
         raise SystemExit("运行期间 wm/ 源码发生变化，本轮结果不可追溯，已中止保存。")
@@ -151,6 +169,7 @@ def run_batch(input_dir: Path, out_dir: Path, name: str | None, recursive: bool)
         "runner": Path(__file__).name,
         "batch_name": batch.name,
         "detection_mode": batch.detection_mode,
+        "prompt_query": batch.prompt_query,
         "gui_defaults": {
             "thresholds": {k: getattr(GUI_DEFAULTS, k) for k in (
                 "mask_alpha_min", "lama_context_margin", "lama_tile_overlap",
@@ -213,6 +232,9 @@ def main() -> None:
     parser.add_argument("--out", type=Path, help="本轮产物输出目录（新建，不覆盖旧轮）")
     parser.add_argument("--name", default=None, help="批次名（默认取输入目录名）")
     parser.add_argument("--recursive", action="store_true", help="递归收集子目录图片（默认只取顶层）")
+    parser.add_argument("--mode", choices=("auto", "prompt"), default="auto",
+                        help="找水印方式：auto＝自动识别（默认）；prompt＝提示词定位（需 --prompt）")
+    parser.add_argument("--prompt", default=None, help="提示词模式的水印描述（如：斜向平铺的内部资料文字水印）")
     parser.add_argument("--self-test", action="store_true", help="小图端到端自检后退出")
     args = parser.parse_args()
 
@@ -228,8 +250,20 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     if any(out_dir.iterdir()):
         raise SystemExit(f"输出目录已存在且非空（每轮实验用新目录）：{out_dir}")
+    # 同一秒启动的重复实例会拿到同一输出目录并竞争 GPU（本机已实测双双起服务
+    # 导致 OOM）：用原子创建锁保证单实例，第二个实例立即退出。
+    lock_path = out_dir / ".running.lock"
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+    except FileExistsError:
+        raise SystemExit(f"输出目录已有活动任务锁（{out_dir}），本实例退出以防止双实例竞争。")
 
-    manifest = run_batch(input_dir, out_dir, args.name, args.recursive)
+    try:
+        manifest = run_batch(input_dir, out_dir, args.name, args.recursive,
+                             mode=args.mode, prompt=args.prompt)
+    finally:
+        lock_path.unlink(missing_ok=True)
     print_summary(manifest)
     print(f"产物：{out_dir}")
     if any("error" in r for r in manifest["records"]):

@@ -497,7 +497,7 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
                     located = photo_fallback
                 located.instances = _instances(located.alpha, thr)
                 return located
-            if located is not None and located.repair_mode == 'document_overlay':
+            if located is not None and located.repair_mode in ('document_overlay', 'document_overlay_full'):
                 located.instances = _instances(located.alpha, thr)
                 return located
         if wanted("paper_repeat"):

@@ -106,6 +106,17 @@ def enclosed_hole_mask(truth: np.ndarray) -> np.ndarray:
 def evaluate(mask_png: Path, alpha: np.ndarray, clean: np.ndarray | None,
              output: np.ndarray | None, source: np.ndarray | None) -> dict:
     selected = np.asarray(Image.open(mask_png).convert("L")) > 0
+    if selected.shape != alpha.shape:
+        # 输入降采样运行（如提示词模式的 WeVisOne 内存适配）时，把选区对齐到
+        # 真值分辨率再评估；对齐只影响评估口径，不影响运行产物本身。
+        selected = np.asarray(Image.fromarray(selected.astype(np.uint8) * 255).resize(
+            (alpha.shape[1], alpha.shape[0]), Image.Resampling.NEAREST)) > 0
+    if output is not None and clean is not None and output.shape != clean.shape:
+        output = np.asarray(Image.fromarray(output.astype(np.uint8)).resize(
+            (clean.shape[1], clean.shape[0]), Image.Resampling.LANCZOS)).astype(float)
+    if source is not None and clean is not None and source.shape != clean.shape:
+        source = np.asarray(Image.fromarray(source.astype(np.uint8)).resize(
+            (clean.shape[1], clean.shape[0]), Image.Resampling.LANCZOS)).astype(float)
     truth = alpha > 0
     stroke = alpha >= 0.5
     inter = int((selected & truth).sum())
@@ -140,6 +151,7 @@ def main() -> None:
     parser.add_argument("--dataset-json", type=Path, default=None, help="dataset.json（分组与格元标签）")
     parser.add_argument("--gt-dir", type=Path, default=None, help="含 *_gt.npz 的事后评估目录")
     parser.add_argument("--out", type=Path, default=None, help="输出 HTML 路径")
+    parser.add_argument("--note", default=None, help="在报告口径区注入的说明段落（HTML 转义后插入）")
     args = parser.parse_args()
 
     run_dir = args.run_dir.resolve()
@@ -305,8 +317,28 @@ def main() -> None:
     if not problem_list:
         problem_list = "<li>本轮没有运行失败、判定未过、选区外改动非零或真值评估异常的样本。</li>"
 
+    condition_note = ""
+    try:
+        first = manifest["records"][0]
+        fdir = next(pages_dir.glob(f"{first['index'] + 1:02d}_*"))
+        fin = Image.open(fdir / "input.png")
+        g0 = np.load(args.gt_dir.resolve() / f"{first['doc_id']}_gt.npz") if args.gt_dir else None
+        if g0 is not None and fin.size != (g0["alpha"].shape[1], g0["alpha"].shape[0]):
+            condition_note = (f'<p class="notice"><strong>运行条件：</strong>本轮输入为降采样副本'
+                         f'（{fin.size[0]}×{fin.size[1]}，原图 {g0["alpha"].shape[1]}×{g0["alpha"].shape[0]}），'
+                         f'用于适配提示词模型服务的内存上限；真值评估已对齐到原图分辨率，绝对值与全分辨率轮次'
+                         f'比较时需注意口径。</p>')
+    except Exception:
+        eval_note = ""
+    if args.note:
+        condition_note += f'<p class="notice"><strong>说明：</strong>{esc(args.note)}</p>'
+
+    mode_label = "提示词定位" if manifest.get("detection_mode") == "prompt" else "自动识别"
+    if manifest.get("prompt_query"):
+        mode_label += f"（{manifest['prompt_query']}）"
+    mode_tag = "提示词定位" if manifest.get("detection_mode") == "prompt" else "自动识别"
     terms_js = json.dumps(TERMS, ensure_ascii=False)
-    title = f"批次自动识别测试报告 {run_time.strftime('%Y-%m-%d %H:%M')}"
+    title = f"批次{mode_tag}测试报告 {run_time.strftime('%Y-%m-%d %H:%M')}"
     page = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)}</title><style>
 body{{font-family:"Microsoft YaHei","PingFang SC",sans-serif;margin:0;background:#f5f6f8;color:#222}}main{{max-width:1280px;margin:0 auto;padding:24px}}h1{{font-size:24px}}h2{{font-size:20px;border-left:4px solid #3a6ea5;padding-left:8px;margin-top:36px}}h3{{font-size:16px}}.lead{{color:#555}}.badge{{font-size:12px;padding:2px 8px;border-radius:10px;margin-left:8px}}.badge.pass{{background:#dcf5e3;color:#16713a}}.badge.warn{{background:#fff3cd;color:#8a6d00}}.badge.fail{{background:#f8d7da;color:#a12622}}.trio{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}}.evidence{{margin-top:10px;max-width:320px}}figure{{margin:0;background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px}}figure img{{width:100%;display:block}}figcaption{{font-size:12px;color:#666;text-align:center;margin-top:4px}}.missing{{height:180px;display:flex;align-items:center;justify-content:center;color:#999}}table{{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}}th,td{{border:1px solid #ddd;padding:5px 8px;text-align:left}}th{{background:#eef1f5}}.metrics th{{width:120px}}.eval th{{background:#e8eef7}}.notice{{background:#fff8e6;border:1px solid #f0dfae;padding:10px 14px;border-radius:6px;margin:14px 0}}.term{{border-bottom:1px dashed #3a6ea5;cursor:help}}#term-pop{{position:fixed;display:none;max-width:360px;background:#222;color:#fff;font-size:13px;padding:10px 12px;border-radius:8px;z-index:99;line-height:1.6}}.stats{{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0}}.stats div{{background:#fff;border:1px solid #ddd;border-radius:8px;padding:10px 18px}}.stats b{{font-size:20px;display:block}}.badge.tier{{background:#e3ecfb;color:#1d4f91;font-weight:600}}small{{color:#777}}section{{margin-bottom:12px}}</style></head><body><main>
 <h1>{esc(title)}</h1>
@@ -325,9 +357,10 @@ body{{font-family:"Microsoft YaHei","PingFang SC",sans-serif;margin:0;background
 <tr><th>水印判定阈值</th><td>{thr["mask_alpha_min"]}</td><th>笔画连接</th><td>{params["close_px"]} px</td></tr>
 <tr><th>修复参考范围</th><td>{thr["lama_context_margin"]} px</td><th>分块重叠</th><td>{thr["lama_tile_overlap"]} px</td></tr>
 <tr><th>选区外扩</th><td>{thr["lama_mask_dilate"]} px</td><th>文字识别</th><td>开启</td></tr>
-<tr><th>找水印方式</th><td>自动识别</td><th>样式路由</th><td>自动</td></tr>
+<tr><th>找水印方式</th><td>{mode_label}</td><th>样式路由</th><td>自动</td></tr>
 </tbody></table>
 {eval_note}
+{condition_note}
 {"".join(group_sections)}
 <h2>需要关注的问题</h2><ul>{problem_list}</ul>
 <p class="lead" style="font-size:13px">生成：tools/{Path(__file__).name}；运行清单 run.json；代码快照 {len(code_frozen)} 个文件；LaMa 模型 {manifest.get("lama_model_sha256", "")[:16]}…。同名批次的后续轮次使用新目录，不复用本目录。</p>
