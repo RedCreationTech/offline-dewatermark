@@ -28,6 +28,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 
 PREVIEW_MAX = 800
+BORDER_WIDTH = 36  # 等效 200dpi 下约 60px 的图边范围，用于拆分边框/内部残留
 
 TERMS = {
     "recall": "召回率：真值水印像素中被选区覆盖的比例。分母是 alpha 大于 0 的全部水印像素，包含淡边缘，不能用提高阈值的方式缩小分母。",
@@ -141,7 +142,14 @@ def evaluate(mask_png: Path, alpha: np.ndarray, clean: np.ndarray | None,
         result["ref_error_after_in_truth"] = float(err_after[truth].mean())
         # 平均误差会被大面积干净区域稀释，小面积高对比残留照样肉眼可见；
         # 用真值区内误差仍超阈值的像素数抓这类残留。
-        result["visible_resid_pixels"] = int((truth & (err_after > 15)).sum())
+        resid = truth & (err_after > 15)
+        result["visible_resid_pixels"] = int(resid.sum())
+        h, w = truth.shape
+        border = np.zeros_like(truth)
+        b = BORDER_WIDTH
+        border[:b, :] = 1; border[-b:, :] = 1; border[:, :b] = 1; border[:, -b:] = 1
+        result["border_resid_pixels"] = int((resid & border).sum())
+        result["interior_resid_pixels"] = int((resid & ~border).sum())
     return result
 
 
@@ -277,8 +285,8 @@ def main() -> None:
             rows.append(f'''<tr><td>{esc(rec["doc_id"])}</td><td>{esc(c["group"])} · {esc(c["cell"])}</td>
 <td>{fmt_pct(ev["recall"])}</td><td>{fmt_pct(ev["stroke_recall"])}</td><td>{fmt_pct(ev["precision"])}</td>
 <td>{ev["missed_pixels"]:,}</td><td>{ev["extra_pixels"]:,}</td><td>{ev["hole_extra_pixels"]:,}</td>
-<td>{err_txt}</td><td>{resid:,}</td></tr>''')
-        return f'''<table class="eval"><thead><tr><th>样本</th><th>组 · 格元</th><th>{term_html("recall", "召回率 α>0")}</th><th>{term_html("stroke_recall", "明显笔画召回率")}</th><th>{term_html("precision", "精确率")}</th><th>漏选像素</th><th>多选像素</th><th>字洞误选</th><th>{term_html("ref_error", "参考误差前→后")}</th><th>{term_html("resid", "可见残留像素")}</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'''
+<td>{err_txt}</td><td>{resid:,}</td><td>{ev.get("border_resid_pixels", 0):,}</td><td>{ev.get("interior_resid_pixels", 0):,}</td></tr>''')
+        return f'''<table class="eval"><thead><tr><th>样本</th><th>组 · 格元</th><th>{term_html("recall", "召回率 α>0")}</th><th>{term_html("stroke_recall", "明显笔画召回率")}</th><th>{term_html("precision", "精确率")}</th><th>漏选像素</th><th>多选像素</th><th>字洞误选</th><th>{term_html("ref_error", "参考误差前→后")}</th><th>{term_html("resid", "可见残留像素")}</th><th>边框残留</th><th>内部残留</th></tr></thead><tbody>{"".join(rows)}</tbody></table>'''
 
     tier_titles = {
         "去除干净": "效果较好：去除干净",
@@ -375,7 +383,8 @@ document.addEventListener("click",()=>pop.style.display="none");
 document.addEventListener("keydown",e=>{{if(e.key==="Escape")pop.style.display="none";}});
 </script></body></html>'''
 
-    out = args.out or (run_dir / f"批次自动识别测试报告_{run_time.strftime('%Y%m%d_%H%M')}.html")
+    mode_file_tag = "提示词定位" if manifest.get("detection_mode") == "prompt" else "自动识别"
+    out = args.out or (run_dir / f"批次{mode_file_tag}测试报告_{run_time.strftime('%Y%m%d_%H%M')}.html")
     out.write_text(page, encoding="utf-8")
     print(out)
 
