@@ -17,7 +17,7 @@ FONT=DEST/'assets/fonts/NotoSansCJKsc-Regular.otf'
 SEED=20261026
 IMAGE_STYLES={
  'local_text':('C01','局部文字'), 'timestamp':('C01','日期时间戳'), 'website':('C01','网址文字'),
- 'signature':('C02','模拟手写签名'), 'logo_transparent':('C02','透明几何 Logo'), 'logo_opaque':('C02','不透明几何 Logo'),
+ 'signature':('C02','模拟手写签名'),
  'center_text':('C03','居中大字'), 'center_white':('C03','白色半透明大字'),
  'center_gray':('C03','灰黑半透明大字'),
  'tiled_diagonal':('C04','斜向平铺文字'), 'tiled_irregular':('C04','非等距密集文字'),
@@ -162,7 +162,6 @@ def collect_bases():
 #  forced-color 样式（center_white / center_gray / heavy_dark / faint）不在其列，
 # 由样式×底图路由处理；faint 是极淡边界样本，有意保持低可见度。
 ADAPTIVE_STYLES = {'local_text','timestamp','website','signature',
-                   'logo_transparent','logo_opaque',
                    'tiled_diagonal','tiled_irregular',
                    'tiny_corner','cropped_edge','center_text'}
 # 水印区中位可见度（相对底图的灰度差级）下限；低于此值视为失真样本。

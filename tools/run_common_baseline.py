@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys_in = ROOT / 'data' / '应用测试输入'
 OUT = ROOT / 'out' / (sys.argv[1] if len(sys.argv) > 1 else '常见水印基线_20261104')
 
-COMMON = {'timestamp', 'website', 'logo_transparent', 'logo_opaque', 'local_text',
+COMMON = {'timestamp', 'website', 'local_text',
           'tiny_corner', 'signature', 'center_text', 'center_white', 'center_gray',
           'tiled_diagonal'}
 NEGATIVE = {'negative', 'normal_logo_signature_negative'}
