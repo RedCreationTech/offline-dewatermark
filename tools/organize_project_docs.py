@@ -174,7 +174,7 @@ def render(f, date):
         ('.regression-control/', '本机观察基线指针', '本机状态，不进 Git；跨机不能直接照搬绝对路径。')]
     guide = page('代码与工具用途说明', [
         ('map', '目录分别做什么', table(['目录', '用途', '说明'], [(escape(a), escape(b), escape(d)) for a,b,d in directory_rows])),
-        ('entry', '平时使用哪些入口', '<pre>./start.sh setup                 # 首次准备本地环境\n./start.sh gui                   # 打开桌面程序\n./start.sh check-data            # 校验固定数据，不运行模型\n./start.sh test --plan           # 预览实际修改需要的检查\n./start.sh test                  # 日常按影响检查\n./start.sh test-release          # 完整三模式对照\n.venv/bin/python tools/organize_project_docs.py  # 更新当前说明\n.venv/bin/python tools/organize_project_docs.py --check  # 只核对说明和链接\n.venv/bin/python tools/build_report_index.py    # 更新报告目录</pre><p>已有本机观察基线，日常不要重新执行 freeze-baseline 替换比较依据。需要完整发布证据时走原放行流程。</p>'),
+        ('entry', '平时使用哪些入口', '<pre>./start.sh setup                 # 首次准备本地环境\n./start.sh gui                   # 打开桌面程序\n./start.sh check-data            # 校验固定数据，不运行模型\n./start.sh test --plan           # 预览实际修改需要的检查\n./start.sh test                  # 日常按影响检查\n./start.sh test-release          # 完整三模式对照\n.venv/bin/python tools/organize_project_docs.py  # 更新当前说明\n.venv/bin/python tools/organize_project_docs.py --check  # 只核对说明和链接\n.venv/bin/python tools/build_mechanism_overview.py  # 更新机制总览\n.venv/bin/python tools/build_report_index.py    # 更新报告目录</pre><p>已有本机观察基线，日常不要重新执行 freeze-baseline 替换比较依据。需要完整发布证据时走原放行流程。</p>'),
         ('html-rules', 'HTML 报告编写与分享约定', '<p>2026-11-02 起执行。目标是任何报告压缩打包发给别人、或只发送单个 HTML 文件，都能完整查看。</p><ul><li><strong>图片必须内嵌</strong>：新写或新改的面向用户 HTML 中，图片一律以 base64（<code>data:image/...</code>）嵌入，禁止引用外部相对路径图片；历史封存报告不强制追溯改造。</li><li><strong>必须进总目录</strong>：所有新建 HTML 报告都要能在 '+link('../out/水印验证报告总目录.html','报告总目录')+' 的分类入口中跳转到达。写完报告后执行 <code>.venv/bin/python tools/build_report_index.py</code> 重建总目录；分类为观察基线、项目管控、失败与诊断、算法实验、历史回归、方案材料，口径见工具内 <code>CATEGORIES</code>。</li><li><strong>压缩包可完整查看</strong>：总目录与报告之间只用相对路径链接；交付前把整个目录压缩一份实际解压验证，双击总目录能分类跳转、图片完整显示。</li><li><strong>链接写法</strong>：链接以真实扩展名结束，不加 <code>#锚点</code>、<code>?参数</code> 等尾巴；确需页内定位的锚点保留在扩展名之前。</li></ul><p>生成类工具（进度页、报告生成器等）输出 HTML 时须遵守同一约定，不能只手工改一次页面。</p>'),
         ('tools', '每个工具的用途', '<p>下面覆盖 tools/ 顶层脚本与展示资源。分类用于导航，专项脚本是否可运行仍取决于其输入、参数和本地资源；没有逐一重跑研究脚本。</p>'+table(['类别', '文件数'],[(escape(k),str(v)) for k,v in sorted(groups.items())])+table(['文件', '类别', '使用说明'],[(link('../tools/'+a,a),escape(b),escape(d)) for a,b,d in catalog])),
         ('backup', 'Git 和本机备份', '<p>程序、工程测试、通用维护脚本、README、架构和长期流程说明通过 Git 保存；当前生成的 HTML 说明与报告只留本机，不进入普通提交。</p><p><code>data/</code>、全部 <code>out/</code>、模型缓存及本机基线指针采用单独资源包或本机备份；2026-11-02 已从当前版本取消追踪本地报告和展示素材；本地原件保留；随后按用户要求清理了新仓库全部分支与标签历史，原仓库和 Release 不改动。<code>proposal/</code>、个人修图工具与配置、内部计划和临时图表不进入新版本。</p><p>换电脑时要另外保存：当前数据与来源、模型、完整封存基线及其资源、尚未入库的方案材料。可选修图配置可能包含密钥，保留在本机，不直接加入仓库。Git 精确状态见本轮整理记录。</p>')], date)
@@ -192,6 +192,7 @@ def render(f, date):
     portal_rows = [
         ('当前说明','项目现状与后续开发说明.html','项目现状','现在的功能、限制、默认与实验边界。'),
         ('当前说明','去水印处理流程图.md','实际处理流程','按实际代码维护，从导入到导出。'),
+        ('当前说明','去水印机制与流程总览.html','机制通俗总览','汇总全部机制的流程说明：各管什么、何时触发、边界在哪；由 tools/build_mechanism_overview.py 生成，细节以流程图文档为准。'),
         ('当前说明','代码与工具用途说明.html','代码与工具用途','目录职责、全部顶层工具、运行与备份入口。'),
         ('当前说明','数据集清单与清理.html','数据用途与数量','三套数据、来源与评分边界、历史清理入口。'),
         ('当前说明','最小回归测试集.html','固定回归范围',f'{c["fixed_inputs"]} 个输入、{c["fixed_pages"]} 张页与明确缺口。'),
@@ -222,7 +223,7 @@ def render(f, date):
     portal = page('项目文档总览', [
         ('start','从这里开始','<p class="note">了解现状先看“项目现状”；查看效果先看“基线效果总览”；改代码前看“代码与工具用途”。历史文件保留原位，分类标签说明它代表什么。</p>'),
         ('documents','每份文档的用途',table(['类型','入口','说明'],[(escape(a),link(b,d),escape(e)) for a,b,d,e in portal_rows])),
-        ('maintenance','以后怎样保持清楚','<p>实际样本清单决定数量，版本记录决定成绩对应的代码，README 只保留入口。维护工具从清单生成当前状态、数据说明和工具目录；不从旧报告复制数字。</p><pre>.venv/bin/python tools/organize_project_docs.py\n.venv/bin/python tools/organize_project_docs.py --check\n.venv/bin/python tools/build_report_index.py</pre>')], date)
+        ('maintenance','以后怎样保持清楚','<p>实际样本清单决定数量，版本记录决定成绩对应的代码，README 只保留入口。维护工具从清单生成当前状态、数据说明和工具目录；不从旧报告复制数字。</p><pre>.venv/bin/python tools/organize_project_docs.py\n.venv/bin/python tools/organize_project_docs.py --check\n.venv/bin/python tools/build_mechanism_overview.py\n.venv/bin/python tools/build_report_index.py</pre>')], date)
     return {'项目现状与后续开发说明.html':status,'项目文档总览.html':portal,
             '数据集清单与清理.html':data,'最小回归测试集.html':fixed,'代码与工具用途说明.html':guide}
 
@@ -232,6 +233,8 @@ def registry_and_readmes(f, date):
     detail={'training_v1':('base','图片/文档记录','基础训练准备，保留原分组；不表示已完成模型训练。'),
             'training_increment':('tasks','不重复图片/页任务训练记录',f'{c["strict"]} 严格配对＋{c["approximate"]} 近似配对＋{c["detection_only"]} 检测专用；修复{c["restoration"]}、检测{c["detection"]}，任务重叠。'),
             'regression_min':('fixed_inputs','输入文件',f'核心{c["core"]}＋真实扩展{c["real"]}，共{c["fixed_pages"]}张页；从既有数据派生，不增加独立来源。')}
+    # dataset_registry.json 中可能已保存上一轮追加的 independent_v1；下方会按当前清单重建，先移除避免重复和未知 id。
+    registry['datasets']=[item for item in registry['datasets'] if item.get('id')!='independent_v1']
     for item in registry['datasets']:
         key,unit,desc=detail[item['id']]; item.update(count=c[key],unit=unit,detail=desc)
         item['bytes']=sum(p.stat().st_size for p in (ROOT/item['path']).rglob('*') if p.is_file())

@@ -466,6 +466,13 @@ def main():
                     '<p>' + '<a href="' + href(ROOT / 'docs/项目现状与后续开发说明.html') + '">当前状态与待处理事项</a> · '
                     '<a href="' + href(ROOT / 'docs/代码与工具用途说明.html') + '">代码、工具与备份</a></p>')
     cards = [item for item in cards if item['id'] != current_id] + [card(current_id, 'control', current_body)]
+    mechanism_overview = ROOT / 'docs/去水印机制与流程总览.html'
+    if mechanism_overview.is_file():
+        identifier = 'mechanism-overview-current'
+        body = ('<h2><a href="' + href(mechanism_overview) + '">机制总览｜去水印全部机制的通俗流程说明（2026-11-11）</a></h2>'
+                '<p>面向内部阅读理解：每个机制管什么、什么时候触发、靠什么判断、保护什么与还不保证什么；'
+                '不写效果分数，能力边界与流程图文档（V1.44）配套。实验机制单独标注默认关闭。</p>')
+        cards = [item for item in cards if item['id'] != identifier] + [card(identifier, 'material', body)]
     failure_record = ROOT / 'docs/去水印失败案例记录.html'
     if failure_record.is_file() and 'id="baseline-review-20261029"' in failure_record.read_text():
         identifier = 'failure-baseline-review-20261029'
