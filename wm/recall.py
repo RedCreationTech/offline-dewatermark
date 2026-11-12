@@ -244,3 +244,76 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
                    text_keepout=None, method=method, repair_mode='inpaint',
                    veil_strength=np.ones(3, np.float32), veil_offset=np.zeros(3, np.float32),
                    overlay_opacity=None)
+
+
+def complete_prompt_strokes(image, layer, thr):
+    """提示词图层边框/笔画补全：模型框与 OCR 行漏掉的残笔，用当前图对比证据补回。
+
+    仅对白底、无正文墨迹的提示词页启用（与纸面直填同一道门）。三步：
+    1. 逐条 OCR 文字行取其经过图边带的区段：覆盖接近零且含"暗于纸面"证据的段，
+       做种子生长并入选区（盖住"行中部已入选、行尾图边残笔漏选"）。
+    2. 边带内未被任何 OCR 行覆盖的残笔：被裁切到只剩 1–2 字的实例读不出 OCR 行
+       （单字读不到、双字被行数门槛过滤），直接在边带未覆盖区取"暗于纸面"种子
+       生长（斜向平铺 906 轮右缘/底缘漏证实测）。
+    3. 笔画侵蚀边缘与包围空洞：生长只到强响应外 3px，粗笔画/低对比笔画会留
+       1–3px 墨迹边缘或空心 interior。对掩码近邻(<=3px)与包围空洞内、本身具
+       "暗于纸面或色度"证据的像素补全；字洞/字间空白为纸面色、无证据，不补。
+    """
+    if layer.method != 'prompt_located_strokes' or layer.repair_mode != 'inpaint':
+        return layer
+    gray0 = image.astype(np.float32).mean(2)
+    if float((gray0 > 235).mean()) <= .70:
+        return layer
+    if layer.text_keepout is not None and layer.text_keepout.any():
+        return layer
+    base = layer.binary(thr.mask_alpha_min) > 0
+    lines = _lines(image, base)
+    height = (float(np.median([ocr._geometry(box)[0] for box, _, _ in lines]))
+              if lines else 30.)
+    domain = (_search_domain(base.shape, lines) if lines
+              else np.zeros(base.shape, bool))
+    paper = (float(layer.paper.reshape(-1, 3).mean()) if layer.paper is not None
+             else float(np.percentile(gray0, 97)))
+    smooth = cv2.GaussianBlur(image.astype(np.float32), (0, 0), .8)
+    blurred = smooth.mean(2)
+    chroma = np.max(np.stack([smooth[..., c] - (smooth.sum(2) - smooth[..., c]) / 2
+                              for c in range(3)]), axis=0)
+    h, w = base.shape
+    band_n = int(1.5 * height) + 4
+    band = np.zeros(base.shape, bool)
+    band[:band_n, :] = 1
+    band[-band_n:, :] = 1
+    band[:, :band_n] = 1
+    band[:, -band_n:] = 1
+    combined = base.copy()
+    for box, _, _ in lines:
+        line_mask = np.zeros(base.shape, np.uint8)
+        cv2.fillConvexPoly(line_mask, np.rint(box).astype(np.int32), 1)
+        seg = (line_mask > 0) & band & domain
+        if seg.sum() < max(24, int(8 * height)):
+            continue
+        if (seg & combined).sum() >= .05 * seg.sum():
+            continue
+        seed = seg & (blurred < paper - 18.)
+        if seed.sum() < 8:
+            continue
+        combined |= _pixel_strokes(image, domain, seed, height)
+    # 边带内无 OCR 行覆盖的裁切残笔：域限边带未覆盖区，避免已选笔画污染噪声参照。
+    band_domain = band & ~combined
+    edge_seed = band_domain & (blurred < paper - 18.)
+    if edge_seed.sum() >= 8:
+        combined |= _pixel_strokes(image, band_domain, edge_seed, height)
+    # 侵蚀边缘/包围空洞的墨迹补全：逐像素要求当前图对比证据，纸面字洞不补。
+    ink = (blurred < paper - 18.) | (chroma > 18.)
+    near = (cv2.dilate(combined.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0) & ~combined
+    # 外圈补背景使所有触边背景连通，从角泛洪标"外部"；剩余背景才是包围空洞。
+    # 不能以 (0,0) 为种子：被斜笔画分隔的触边开放纸面不连到角点，会被误判为空洞。
+    bg = (~combined).astype(np.uint8)
+    pad = np.ones((h + 2, w + 2), np.uint8)
+    pad[1:-1, 1:-1] = bg
+    cv2.floodFill(pad, np.zeros((h + 4, w + 4), np.uint8), (0, 0), 2)
+    holes = pad[1:-1, 1:-1] == 1
+    combined |= (near | holes) & ink
+    if combined.sum() == base.sum():
+        return layer
+    return replace(layer, alpha=combined.astype(np.float32), footprint=combined)

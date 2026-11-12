@@ -124,6 +124,9 @@ class BatchWorker(QThread):
                 kind="stage", batch=batch.uid, index=index,
                 message=(f"整框重绘覆盖约 {info['text_overlap_ratio']:.0%} 的正文区域，"
                          "框内文字会被一并重绘")))
+        # 图边裁切实例补全：模型框漏掉的边缘残笔，用当前图对比证据补回（限白底无正文页）。
+        from . import recall as _recall
+        layer = _recall.complete_prompt_strokes(page.image, layer, thr)
         return layer, info
 
     def _run_jobs(self) -> None:

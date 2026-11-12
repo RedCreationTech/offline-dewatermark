@@ -92,16 +92,13 @@ def enclosed_hole_mask(truth: np.ndarray) -> np.ndarray:
     """真值笔画完全包围的背景（字洞／字间空白）。"""
     import cv2
     bg = (~truth).astype(np.uint8)
-    n, labels = cv2.connectedComponents(bg, connectivity=4)
-    holes = np.zeros_like(bg)
     h, w = bg.shape
-    for i in range(1, n):
-        ys, xs = np.where(labels == i)
-        if len(ys) == 0:
-            continue
-        if xs.min() > 0 and xs.max() < w - 1 and ys.min() > 0 and ys.max() < h - 1:
-            holes[labels == i] = 1
-    return holes.astype(bool)
+    # 外圈补一圈背景使所有触边背景连通，从角泛洪标记"外部"；
+    # 剩余背景即不触边的包围空洞。O(像素)，避免逐连通域全图扫描。
+    pad = np.ones((h + 2, w + 2), np.uint8)
+    pad[1:-1, 1:-1] = bg
+    cv2.floodFill(pad, np.zeros((h + 4, w + 4), np.uint8), (0, 0), 2)
+    return pad[1:-1, 1:-1] == 1
 
 
 def evaluate(mask_png: Path, alpha: np.ndarray, clean: np.ndarray | None,

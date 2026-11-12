@@ -322,6 +322,27 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
         from .paper_repeat import restore
         return restore(img, mask), [RepairName.PAPER_CLEANUP]
 
+    if mask.repair_mode == 'inpaint' and mask.method == 'prompt_located_strokes':
+        # 白底无正文的提示词页：选区由模型框内像素证据生成（prompt_detect），
+        # 纸面直填即可；整框 LaMa 会在重复灰笔画上下文上"续画加粗"
+        # （条目 #001；斜向平铺白底 906 轮实测 8/13 修复加重）。仅在无正文墨迹
+        # 页面启用，有正文的文档页保留 LaMa 以保护文字。
+        gray = img.astype(np.float32).mean(2)
+        if (float((gray > 235).mean()) > .70
+                and not (mask.text_keepout is not None and mask.text_keepout.any())):
+            # 保护只限近黑墨迹与表格线；彩色水印笔画本身在选区内、必须填掉
+            # （paper_repeat.restore 的色度保护 chroma>18 会把彩色水印整片保护住）。
+            paper_c = (np.median(mask.paper.reshape(-1, 3), axis=0) if mask.paper is not None
+                       else np.percentile(img.reshape(-1, 3), 97, axis=0))
+            ink = gray < 35.
+            protected = cv2.dilate(ink.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            from .paper_repeat import table_rules
+            protected |= table_rules(img) & mask.footprint
+            region = mask.footprint & ~protected
+            out = img.copy()
+            out[region] = np.clip(paper_c, 0, 255).astype(np.uint8)
+            return out, [RepairName.PAPER_CLEANUP]
+
     if mask.repair_mode == 'bright_paper_cleanup':
         from .contrast_text import restore_bright
         return restore_bright(img, mask, thr), [RepairName.LAMA]
