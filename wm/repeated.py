@@ -427,7 +427,21 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
                 # 增强图为反相（笔画暗、纸面亮），按低值取模板。
                 template_k=(recurring<200).astype(np.uint8)
             else:
+                # 固定阈值 30 对极淡灰印隐性设了透明度门槛（极淡12 实测笔画响应
+                # 峰值仅 17，基准30% 是 41）。仅当固定阈值在本列留不下模板（<50px）
+                # 且响应峰值够证据（自适应下限 8 → amp>13.3）时，按峰值缩放；强页
+                # 走不到这里，行为不变。仅灰度性墨水启用：单极拟合要求各通道对比度
+                # ≥12，彩色淡印（浅黄 R/G 对比≈0）过了模板门也会被退回，且模板重绘
+                # 路比原笔画路更差（浅黄实测残留 1.65→3.33），维持原拒绝。
+                amp=float(recurring.max())
                 template_k=(recurring>30).astype(np.uint8)
+                if template_k.sum()<50 and amp>13.3:
+                    win=rotated[by0:by1,bx0:bx1].reshape(-1,3).astype(np.float32)
+                    lum=win.mean(1)
+                    inkwin=win[lum<=np.percentile(lum,5)]
+                    spread=float(inkwin.max(0).max()-inkwin.min(0).min()) if inkwin.size else 0.
+                    if spread<15.:
+                        template_k=(recurring>max(8.,.6*amp)).astype(np.uint8)
             if document:
                 template_k[np.isfinite(patches).sum(axis=0)<2]=0
             if template_k.sum()<50:
