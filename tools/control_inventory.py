@@ -19,7 +19,12 @@ def build_inventory(project: Path, inputs: Path) -> dict:
     source = json.loads((inputs / '输入来源与校验.json').read_text())
     catalogs = {}
     for name in ('watermark_training_v1', 'watermark_training_increment_v1_1'):
+        # 2026-11-23 起退役数据直接删除不留档：训练语料清单不存在时按空目录处理。
         root = project / 'data' / name
+        if not (root / 'manifest.jsonl').is_file():
+            root = project / 'data' / '_archive' / name
+        if not (root / 'manifest.jsonl').is_file():
+            continue
         for row in read_rows(root / 'manifest.jsonl'):
             catalogs[row['id']] = (root, row)
 
@@ -88,9 +93,26 @@ def build_inventory(project: Path, inputs: Path) -> dict:
             refs=[reference(legacy / r['clean'], legacy / 'mask' / (r['id'] + '_veil.npz')) for r in matches])
 
     # Keep existing fixed PDF/negative/style coverage in addition to the screenshot inputs.
+    # 2026-11-23 固定回归集退役：仅在留档目录上校验清单与文件哈希，不再做退役投影。
+    def _read_rows(p):
+        return [json.loads(x) for x in p.read_text(encoding='utf-8').splitlines() if x.strip()]
+
+    def _validate_fixed(r):
+        import hashlib
+        cases = _read_rows(r / 'manifest.jsonl')
+        cov = json.loads((r / 'coverage.json').read_text(encoding='utf-8'))
+        assert hashlib.sha256((r / 'manifest.jsonl').read_bytes()).hexdigest() == cov['manifest_sha256']
+        for rel, want in json.loads((r / 'file_hashes.json').read_text(encoding='utf-8')).items():
+            assert hashlib.sha256((r / rel).read_bytes()).hexdigest() == want, rel
+        return cases
+
     root = project / 'data/watermark_regression_min_v1'
-    from tools.run_min_regression import validate
-    fixed, _ = validate(root)
+    if not (root / 'manifest.jsonl').is_file():
+        root = project / 'data/_archive/固定回归退役_20261123/watermark_regression_min_v1'
+    if not (root / 'manifest.jsonl').is_file():
+        fixed = []  # 固定回归集已按新规则删除（2026-11-23 起退役不留档）
+    else:
+        fixed = _validate_fixed(root)
     for row in fixed:
         refs = []
         for page_number, p in enumerate(row['pages'] if row['kind'] == 'pdf' else [row], 1):

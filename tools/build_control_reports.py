@@ -61,12 +61,19 @@ GLOSSARY = {
     '独立验证集': '从未参与调参的锁柜评测集，只在里程碑一次性查看；据其调参即降级。',
     '历次基线对比': '把每一轮封存的基线按时间排成一张表，横向对比三档页数、多选背景页数、平均召回率和较上轮的退化/优化数量，用于快速看每天测试结果的走向。',
     '三档': '效果较好 / 一般·待复核 / 问题较多 三个自动初筛档位，由运行错误、负例改动、笔画召回率、选区精确率决定（较好=召回≥80%且精确率≥70%；问题=任一低于50%）；背景误差与多选像素不参与分档。',
+    '机器预筛': '程序按 笔画召回率≥98% 且 选区精确率≥90% 自动标的“候选效果好”，只用于排序和初分，不作准；最终归属由人工在报告里定档。',
+    '定档': '人工在报告里给每张样本选定归属数据集：效果好／提示词可处理／待解决。定档结果导出 JSON 后由归档脚本复制进对应数据集目录，并附判定记录。',
 }
 
 LOW_RECALL = 0.5        # 分档：召回低于此值列入问题较多
 GOOD_RECALL = 0.8       # 分档：召回达到此值才有较好档资格
 LOW_PRECISION = 0.5     # 分档：精确率低于此值列入问题较多
 GOOD_PRECISION = 0.7    # 分档：精确率达到此值才有较好档资格
+# 效果定档（人工归档进数据集）的机器预筛线：召回≥98% 且 精确率≥90% 标“候选效果好”，
+# 只作预分，不作准；与上面三档分档（报告口径）相互独立，见 AGENTS 工作约束。
+CLASSIFY_GOOD_RECALL = 0.98
+CLASSIFY_GOOD_PRECISION = 0.90
+CLASSIFY_CLASSES = ('效果好', '提示词可处理', '待解决')
 BAD_FP_FRAC = 0.005     # 多选占比 0.5% 列入异常清单（不影响分档）
 GOOD_FP_FRAC = 0.002    # 多选占比 0.2%（fp 专页入口阈值）
 CMP_RECALL_TOL = 0.03   # 与上次基线对比：召回率差异 ≤3pp 视为持平
@@ -645,6 +652,7 @@ def build_detail(out: Path, run: dict, a: dict, moment: str, manifest: dict) -> 
     assets = Path(__file__).parent / 'assets'
     css = (assets / 'effect_overview_style.css').read_text()
     app_js = (assets / 'effect_overview_app.js').read_text()
+    classify_js = (assets / 'effect_overview_classify.js').read_text()
     # 返回总目录：封存报告在 out/项目防退化控制/<轮次>/ 下，深度两级，按实际路径算相对链接。
     import os
     index_path = out.parents[1] / '水印验证报告总目录.html'
@@ -745,6 +753,10 @@ def build_detail(out: Path, run: dict, a: dict, moment: str, manifest: dict) -> 
         sources['rules'] = '验收规则.json'
     payload = dict(rows=rows, counts=counts, negative_counts=negative_counts,
                    sources=sources,
+                   classify=dict(enabled=True, run_dir=str(out),
+                                 good_recall=CLASSIFY_GOOD_RECALL,
+                                 good_precision=CLASSIFY_GOOD_PRECISION,
+                                 classes=list(CLASSIFY_CLASSES)),
                    manifest=dict(created_at=datetime.now().astimezone().isoformat(timespec='seconds'),
                                  source_completed_at=run.get('completed_at'),
                                  source_record_sha256=_hl.sha256((out / '运行记录.json').read_bytes()).hexdigest(),
@@ -799,6 +811,21 @@ def build_detail(out: Path, run: dict, a: dict, moment: str, manifest: dict) -> 
 .hist-style {{margin:6px 0}}
 .hist-style summary {{font-size:13px;color:#176a4d;cursor:pointer}}
 .hist-style table {{font-size:12.5px}}
+.classify-bar {{display:flex;gap:14px;flex-wrap:wrap;align-items:center;background:#f0f7f3;border:1px solid #cfe3d8;border-radius:8px;padding:10px 14px;margin:10px 0;font-size:13px}}
+.classify-bar .cls-title {{font-weight:650}}
+.classify-bar .cls-progress {{color:#8a6d1a;font-weight:600}}
+.classify-bar .cls-progress.cls-done {{color:#176c4d}}
+.classify-bar button {{border:1px solid #c7d5cc;background:white;border-radius:6px;padding:6px 13px;cursor:pointer}}
+.classify-bar .cls-hint {{color:#62716d;font-size:12px}}
+.cls-holder {{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px;border-top:1px solid #edf1ed;padding-top:10px;font-size:12px}}
+.cls-badge {{background:#e5f2ea;color:#176c4d;border-radius:4px;padding:2px 8px}}
+.cls-state {{color:#62716d}}
+.cls-btns {{display:flex;gap:6px}}
+.cls-btn {{border:1px solid #c7d5cc;background:white;border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}}
+.cls-btn.on {{background:#176c4d;color:white;border-color:#176c4d}}
+article.card[data-cls="0"] {{outline:2px solid #176c4d;outline-offset:-2px}}
+article.card[data-cls="1"] {{outline:2px solid #91621e;outline-offset:-2px}}
+article.card[data-cls="2"] {{outline:2px solid #aa443f;outline-offset:-2px}}
 </style></head><body><main class="shell">
 {back_link}
 <div class="conclusion">
@@ -828,6 +855,8 @@ def build_detail(out: Path, run: dict, a: dict, moment: str, manifest: dict) -> 
 <p>笔画召回率达到 {GOOD_RECALL:.0%} 且选区精确率达到 {GOOD_PRECISION:.0%} 的页进入效果较好档。无水印对照没有选区且没有改动时，也进入本档并单独标注。</p>
 <p>笔画召回率低于 {LOW_RECALL:.0%}、选区精确率低于 {LOW_PRECISION:.0%}、运行错误或无水印对照误选／改动，均归入问题较多。其余进入一般／待复核，包括评分缺失且已有评分未触发问题较多的页。背景误差与多选像素逐张展示。</p>
 <p>笔画召回的真值为 alpha&gt;0 的全部水印像素，不隐藏淡边缘。字间空白、实际水印残留和正文识别正确率尚未可靠评估；像素误差不等于残留率。</p>
+<h3>效果定档与数据集归档</h3>
+<p>本报告内嵌「效果定档」工具：每张样本卡片可人工定为 效果好／提示词可处理／待解决 三档之一（机器只按 笔画召回率≥{CLASSIFY_GOOD_RECALL:.0%} 且 选区精确率≥{CLASSIFY_GOOD_PRECISION:.0%} 预筛“候选效果好”，不作准）。在报告里全部定档后导出 JSON，由 tools/archive_classified.py 把样本复制进 data/效果分类数据集 的三个目录，并附判定记录。详细标准见 data/效果分类数据集/README.md。</p>
 <h3>重复样本如何处理</h3>
 <p id="deduplication-note">默认按“输入文件哈希＋页码”合并，同图不同批次展示较差档。勾选“显示重复批次记录”可查看全部批次。PDF 与 JPG 属于不同输入。</p>
 {cmp_note}
@@ -840,7 +869,8 @@ def build_detail(out: Path, run: dict, a: dict, moment: str, manifest: dict) -> 
 <script id="reviewed-data" type="application/json">{data_json}</script>
 <div id="term-pop"></div>
 <script>{TERMS_JS}
-{app_js}</script>
+{app_js}
+{classify_js}</script>
 </body></html>'''
     dest = out / f'项目防退化控制明细报告_{moment.replace("-", "").replace(" ", "_").replace(":", "")}.html'
     dest.write_text(page)

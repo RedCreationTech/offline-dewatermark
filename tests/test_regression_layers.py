@@ -5,9 +5,6 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from types import SimpleNamespace
-from contextlib import ExitStack, redirect_stdout
-from io import StringIO
 
 from tools.regression_guard import apply_reviews, compare_subset
 from tools.regression_layers import changed_files, expand_batches, jobs_for, make_plan, minimum_level
@@ -59,42 +56,7 @@ def candidate():
 
 
 class LayerTests(unittest.TestCase):
-    def test_full_gate_requires_engineering_preflight(self):
-        from tools import daily_check
-        for unit_code in (0, 1):
-            with self.subTest(unit_code=unit_code), tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
-                directory = Path(tmp)
-                state = directory / 'state.json'
-                state.write_text('{}')
-                plan = dict(level='full', files=['README.md'], page_mode_count=3,
-                            mode_case_ids={'desktop': ['fixture']}, estimated_seconds=30, reasons=[])
-                def mocked_load(path):
-                    if path == state:
-                        return {'path': str(directory / 'baseline'), 'seal': 'sealed'}
-                    if str(path).endswith('regression.json'):
-                        return CONFIG
-                    return {}
-                stack.enter_context(patch.object(daily_check, 'STATE', state))
-                stack.enter_context(patch.object(daily_check, 'load_profile', return_value=None))
-                stack.enter_context(patch.object(daily_check, 'load', side_effect=mocked_load))
-                stack.enter_context(patch.object(daily_check, 'digest', return_value='sealed'))
-                stack.enter_context(patch.object(daily_check, 'changed_files', return_value=['README.md']))
-                stack.enter_context(patch.object(daily_check, 'make_plan', return_value=plan))
-                stack.enter_context(patch.object(daily_check, 'watch_sources', return_value={}))
-                stack.enter_context(patch.object(daily_check, 'document_links', return_value={'missing': []}))
-                events = []
-                def unit(*args, **kwargs):
-                    events.append('engineering')
-                    return SimpleNamespace(returncode=unit_code)
-                def full(*args, **kwargs):
-                    events.append('full')
-                    return 0
-                stack.enter_context(patch.object(daily_check.subprocess, 'run', side_effect=unit))
-                stack.enter_context(patch.object(daily_check, 'control_main', side_effect=full))
-                stack.enter_context(redirect_stdout(StringIO()))
-                code = daily_check.main(['--level', 'full', '--out', str(directory / 'run')])
-                self.assertEqual(events, ['engineering', 'full'] if unit_code == 0 else ['engineering'])
-                self.assertEqual(code, unit_code)
+    # test_full_gate_requires_engineering_preflight 随 daily_check（固定集分层检查）于 2026-11-23 退役，见 config/regression.json retirements。
 
     def test_change_classes_and_unknown_application_files(self):
         for path, expected in [('README.md', 'static'), ('wm/viewer.py', 'unit'),

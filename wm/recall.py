@@ -46,15 +46,19 @@ def _lines(image, base):
     return result
 
 
-def _search_domain(shape, lines):
+def _search_domain(shape, lines, extend_to_border=False):
     domain = np.zeros(shape, np.uint8)
     for box, _, _ in lines:
         height, _, _ = ocr._geometry(box)
         direction = box[1]-box[0]
         direction /= max(float(np.linalg.norm(direction)), 1.)
         extended = box.copy()
-        extended[[0, 3]] -= direction*height
-        extended[[1, 2]] += direction*height
+        # 图边裁切残字沿该行自身方向继续延伸到页边（平铺水印被页面裁断的
+        # 物理事实）；垂向带宽保持行高不变。仅无正文页（单极反解路径）启用，
+        # 延长段内的选中像素仍须过 _grow_strokes 的强核/弱支撑连通证据门。
+        reach = max(shape) * 2 if extend_to_border else height
+        extended[[0, 3]] -= direction*reach
+        extended[[1, 2]] += direction*reach
         cv2.fillConvexPoly(domain, np.rint(extended).astype(np.int32), 1)
     return domain > 0
 
@@ -103,6 +107,20 @@ def _pixel_strokes(image, domain, seed_region, height, *, preserve_seeds=False,
     coloured = [item for item in choices if item[2] and item[3] == cv2.MORPH_TOPHAT and item[0] >= 3]
     best = max(coloured or choices, key=lambda item: item[0])
     region = best[1]
+    if not coloured and best[2] == 0 and seed_region.any():
+        # tophat/blackhat 是同一对比证据的明暗两个极性，按可分性打分会被形态学
+        # 开/闭运算膨胀暗(亮)区产生的“纸环”假象带偏（白底斜向平铺实测：暗字旁
+        # 的亮纸环分数高于笔画本体，blackhat 才看得见的边缘裁切残笔细边被丢弃，
+        # 修复后留可见细边）。亮度通道的极性以种子（已验证选区）自身的明暗为准，
+        # 与种子极性不一致的高分候选不采用。
+        seed_level = float(np.median(gray[seed_region]))
+        paper_level = float(np.percentile(gray, 97))
+        want_op = cv2.MORPH_BLACKHAT if seed_level < paper_level - 8. else cv2.MORPH_TOPHAT
+        if best[3] != want_op:
+            for score, reg, channel_index, operation in choices:
+                if channel_index == 0 and operation == want_op:
+                    region = reg
+                    break
     if not coloured and best[2] and region.any():
         gray = max((item for item in choices if item[2] == 0), key=lambda item: item[0])
         # Weakly tinted grain can hide an antialias edge in one colour channel.
@@ -160,7 +178,9 @@ def expand(image, mask, thr, *, use_ocr=True, style=None):
         if not lines:
             return mask
         height = float(np.median([ocr._geometry(box)[0] for box, _, _ in lines]))
-        domain = _search_domain(base.shape, lines)
+        # 单极反解页无正文墨迹（keepout 为空才进此分支），把行方向搜索域延长到
+        # 图边不会碰到正文区；纸面重复文字页保持原 1 行高外扩，行为不变。
+        domain = _search_domain(base.shape, lines, extend_to_border=single_pole_overlay)
         seed = base & domain
         region = _pixel_strokes(image, domain, seed, height,
                                 repeat_support=mask.repeat_stroke_support)

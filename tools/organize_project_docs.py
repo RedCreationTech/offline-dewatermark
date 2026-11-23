@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 DOCS = ROOT / 'docs'
 VERSION = '项目整理V1_20261029'
 CURRENT_DOCS = {'项目现状与后续开发说明.html', '项目文档总览.html',
-                '数据集清单与清理.html', '最小回归测试集.html', '代码与工具用途说明.html'}
+                '数据集清单与清理.html', '代码与工具用途说明.html'}
 CSS = '''*{box-sizing:border-box}body{margin:0;background:#f4f6f4;color:#243c32;font:16px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}main{max-width:1120px;margin:auto;padding:36px 24px 70px}h1{font-size:30px;line-height:1.4}h2{font-size:22px;margin-top:0}section{background:white;border:1px solid #dde5df;border-radius:12px;padding:24px;margin:20px 0}a{color:#176a4d;text-underline-offset:3px}nav{display:flex;flex-wrap:wrap;gap:10px 20px}table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #dfe5df;overflow-wrap:anywhere}th{background:#f0f4f0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#eef3ee;padding:16px;border-radius:8px}code{font-size:13px;overflow-wrap:anywhere}.note{background:#eaf4ed;border-left:4px solid #287653;padding:16px}.muted{color:#617267;font-size:13px}.table-wrap{overflow:auto}summary{cursor:pointer;color:#176a4d;padding:8px}li{margin:8px 0}@media(max-width:650px){main{padding:20px 12px}section{padding:16px}h1{font-size:25px}td,th{padding:8px}}'''
 
 
@@ -60,11 +60,18 @@ def facts():
     from tools.control_inventory import build_inventory
     from tools.regression_retirements import load_profile, project_baseline
     registry = load(ROOT / 'data/dataset_registry.json')
-    v1 = rows(ROOT / 'data/watermark_training_v1/manifest.jsonl')
-    strict = rows(ROOT / 'data/watermark_training_increment_v1_1/manifest.jsonl')
-    tasks = rows(ROOT / 'data/watermark_training_increment_v1_1/training_tasks.jsonl')
-    fixed = rows(ROOT / 'data/watermark_regression_min_v1/manifest.jsonl')
-    coverage = load(ROOT / 'data/watermark_regression_min_v1/coverage.json')
+    archive = ROOT / 'data/_archive'
+
+    def _rows_if(p):
+        # 退役数据按新规则直接删除（2026-11-23 起不留电子坟墓）：缺失就当 0，不再报错。
+        return rows(p) if p.is_file() else []
+
+    v1 = _rows_if(archive / 'watermark_training_v1/manifest.jsonl')
+    strict = _rows_if(archive / 'watermark_training_increment_v1_1/manifest.jsonl')
+    tasks = _rows_if(archive / 'watermark_training_increment_v1_1/training_tasks.jsonl')
+    fixed = _rows_if(archive / '固定回归退役_20261123/watermark_regression_min_v1/manifest.jsonl')
+    cov_p = archive / '固定回归退役_20261123/watermark_regression_min_v1/coverage.json'
+    coverage = load(cov_p) if cov_p.is_file() else {'missing_or_incomplete': []}
     pointer = load(ROOT / '.regression-control/baseline.json')
     baseline = Path(pointer['path'])
     if sha(baseline / '封存校验.json') != pointer['seal']:
@@ -74,24 +81,29 @@ def facts():
     run, active = project_baseline(original_run, original_inventory, load_profile(), pointer['seal'])
     inventory_error = None
     unregistered = []
-    try:
-        current = build_inventory(ROOT, ROOT / 'data/应用测试输入')
-    except ValueError as exc:
-        # Documentation can record an incomplete inventory; release checking still
-        # uses the original strict tool and remains blocked by unregistered files.
-        prefix = '存在未登记的输入或参考，必须先分类：'
-        if not str(exc).startswith(prefix):raise
-        inventory_error = str(exc)
-        for name in ast.literal_eval(str(exc)[len(prefix):]):
-            p = ROOT / 'data/应用测试输入' / name
-            digest = sha(p)
-            duplicates = [r['id'] for r in active['cases'] if r['input_sha256'] == digest]
-            unregistered.append(dict(path=str(p.relative_to(ROOT)), sha256=digest,
-                                     matches_registered_ids=duplicates))
-        current = active  # Registered retained scope only, explicitly labelled below.
-    if {(r['id'], r['input_sha256'], r['page_count'], r['batch']) for r in current['cases']} != {(r['id'], r['input_sha256'], r['page_count'], r['batch']) for r in active['cases']}:
-        raise ValueError('当前应用输入与保留基线范围不一致，须单独核对，不自动改写样本数量')
-    counts = dict(base=len(v1), strict=len(strict), tasks=len(tasks),
+    inputs_deleted = not (ROOT / 'data/_archive/固定回归退役_20261123/应用测试输入').is_dir() and not (ROOT / 'data/应用测试输入').is_dir()
+    retired_inputs = ROOT / 'data/_archive/固定回归退役_20261123/应用测试输入'
+    if not retired_inputs.is_dir():
+        current = active  # 旧应用输入已按新规则删除（2026-11-23 起退役不留档）
+    else:
+        try:
+            current = build_inventory(ROOT, retired_inputs)  # 已退役输入的清单核对，仅作留档一致性检查
+        except ValueError as exc:
+            # Documentation can record an incomplete inventory; release checking still
+            # uses the original strict tool and remains blocked by unregistered files.
+            prefix = '存在未登记的输入或参考，必须先分类：'
+            if not str(exc).startswith(prefix):raise
+            inventory_error = str(exc)
+            for name in ast.literal_eval(str(exc)[len(prefix):]):
+                p = retired_inputs / name
+                digest = sha(p)
+                duplicates = [r['id'] for r in active['cases'] if r['input_sha256'] == digest]
+                unregistered.append(dict(path=str(p.relative_to(ROOT)), sha256=digest,
+                                         matches_registered_ids=duplicates))
+            current = active  # Registered retained scope only, explicitly labelled below.
+    scope_drift = sorted({(r['id'], r['batch']) for r in current['cases']} ^ {(r['id'], r['batch']) for r in active['cases']})
+    # 2026-11-23 退役后不再强制一致：留档清单与历史基线范围如有出入，只记录不阻断文档更新。
+    counts = dict(base=len(v1), strict=len(strict), tasks=len(tasks), scope_drift=scope_drift, inputs_deleted=inputs_deleted,
                   approximate=sum(r['category'] == 'approximate_pair' for r in tasks),
                   restoration=sum('restoration' in r['tasks'] for r in tasks),
                   detection=sum('detection' in r['tasks'] for r in tasks),
@@ -107,12 +119,12 @@ def facts():
                 baseline=baseline, baseline_seal=pointer['seal'], original_run=original_run,
                 current=current, changed_application_files=changed,
                 inventory_error=inventory_error, unregistered=unregistered,
-                source_sha256={str(p.relative_to(ROOT)): sha(p) for p in [ROOT / 'data/watermark_training_v1/manifest.jsonl', ROOT / 'data/watermark_training_increment_v1_1/manifest.jsonl', ROOT / 'data/watermark_training_increment_v1_1/training_tasks.jsonl', ROOT / 'data/watermark_regression_min_v1/manifest.jsonl']})
+                source_sha256={str(p.relative_to(ROOT)): sha(p) for p in [archive / 'watermark_training_v1/manifest.jsonl', archive / 'watermark_training_increment_v1_1/manifest.jsonl', archive / 'watermark_training_increment_v1_1/training_tasks.jsonl', archive / '固定回归退役_20261123/watermark_regression_min_v1/manifest.jsonl'] if p.is_file()})
 
 
 def tool_catalog():
-    daily = {'daily_check.py', 'regression_control.py', 'regression_guard.py', 'regression_layers.py', 'regression_retirements.py', 'control_inventory.py', 'control_worker.py', 'run_min_regression.py', 'verify_control_chain.py'}
-    docs = {'organize_project_docs.py', 'build_report_index.py', 'build_single_flow_demo.py', 'build_watermark_review.py', 'sync_real_training_docs.py', 'update_failure_cases_from_baseline.py'}
+    daily = {'regression_control.py', 'regression_guard.py', 'regression_layers.py', 'regression_retirements.py', 'control_inventory.py', 'control_worker.py'}
+    docs = {'organize_project_docs.py', 'build_report_index.py', 'build_single_flow_demo.py', 'build_mechanism_overview.py', 'build_control_reports.py'}
     catalog = []
     for p in sorted((ROOT / 'tools').iterdir()):
         if not p.is_file() or p.suffix not in {'.py', '.mjs', '.js', '.css', '.txt'}:
@@ -143,9 +155,10 @@ def tool_catalog():
 
 def render(f, date):
     c = f['counts']
-    inventory_note = ('<p class="note"><strong>完整清单检查尚未通过。</strong>发现未登记文件，已登记范围仍为下表数量；未登记文件保留原位，不自动纳入或移除。</p><ul>' + ''.join('<li><code>'+escape(r['path'])+'</code>；'+('内容与已登记输入完全相同。' if r['matches_registered_ids'] else '尚无相同已登记输入。')+'</li>' for r in f['unregistered']) + '</ul>') if f['inventory_error'] else '<p>当前应用输入清单已核对；清单一致不表示图像质量合格。</p>'
-    overview = '../out/完整基线效果总览_20261029_V1/去水印效果分档总览_20261029.html'
-    recent = '../out/检测漏接单项实验_20261029_112047/检测漏接单项实验_新旧结果对比_20261029.html'
+    inventory_note = ('<p class="note"><strong>完整清单检查尚未通过。</strong>发现未登记文件，已登记范围仍为下表数量；未登记文件保留原位，不自动纳入或移除。</p><ul>' + ''.join('<li><code>'+escape(r['path'])+'</code>；'+('内容与已登记输入完全相同。' if r['matches_registered_ids'] else '尚无相同已登记输入。')+'</li>' for r in f['unregistered']) + '</ul>') if f['inventory_error'] else ('<p>旧应用输入（应用测试输入）已删除；当前效果数据为分层数据集与效果分类数据集。</p>' if f['counts'].get('inputs_deleted') else '<p>当前应用输入清单已核对；清单一致不表示图像质量合格。</p>')
+    # 历史基线/实验链接目标已不在本地（2026-11 清理）；指向报告总目录，历史明细以封存目录为准。
+    overview = '../out/水印验证报告总目录.html'
+    recent = overview
     count_table = table(['数据', '当前数量', '用途与限制'], [
         ('基础数据', f'{c["base"]:,} 条图片／PDF 文档记录', '训练准备与开发；有训练、验证、测试分组，不能与按页统计直接相加。'),
         ('人工增量', f'{c["tasks"]} 个不重复任务样本', f'{c["strict"]} 条严格配对＋{c["approximate"]} 组近似配对＋{c["detection_only"]} 张检测专用；修复视图 {c["restoration"]}、检测视图 {c["detection"]}，任务重叠。'),
@@ -158,9 +171,9 @@ def render(f, date):
             ('手动画笔', '用户确认完整选区后重新处理并保存来源记录；人工效果与自动效果分开统计。'),
             ('默认关闭的实验', '自动比较原方法与笔画补全、彩色笔画细化、旧笔画保留、斜字方向补试；均未获得默认放行资格。自动比较保留两种实际结果，仍需核对残留与内容损伤。SLBR 等研究模型未接入默认应用。')])+ '<p>操作细节与此前实验记录保留在 '+link('历史开发记录_20261029.md', '整理前开发详细记录')+'；实验结论见 '+link('../out/水印验证报告总目录.html', '报告目录')+'。</p>'),
         ('data', '数据和测试范围', inventory_note+count_table),
-        ('evidence', '哪些结果可以作为依据', '<p>本机观察基线是 <code>'+escape(f['baseline'].name)+'</code>，于 2026-10-28 完成三模式记录并封存，原始 '+f'{c["historical_mode_pages"]:,} 页次。按用户要求移除三张手写样本后，当前保留 '+f'{c["mode_pages"]:,} 页次；历史原件未改写。</p><p>当前应用源码与该快照仍有差异，因此<strong>旧基线不能证明当前工作版本全量通过</strong>。'+link(overview, '查看基线效果初筛')+'，'+link('去水印失败案例记录.html', '查看已知失败')+'。分档是自动初筛，未逐张人工验收；残留和识别正确率不能可靠测量时保持未评估。</p><p>10 月 29 日斜字方向实验完成 16 页次开发对照：目标仍未检测成功，新旧选区和输出相同，干净界面耗时增加超限，候选继续默认关闭。'+link(recent, '查看这轮实验原始报告')+'。工程检查通过不能代替图像质量验收。</p><details><summary>当前应用与观察基线不同的文件</summary><pre>'+escape('\n'.join(f['changed_application_files']) or '无')+'</pre></details>'),
+        ('evidence', '哪些结果可以作为依据', '<p>本机观察基线是 <code>'+escape(f['baseline'].name)+'</code>，于 2026-10-28 完成三模式记录并封存，原始 '+f'{c["historical_mode_pages"]:,} 页次。按用户要求移除三张手写样本后，当前保留 '+f'{c["mode_pages"]:,} 页次；历史原件未改写。</p><p>当前应用源码与该快照仍有差异，因此<strong>旧基线不能证明当前工作版本全量通过</strong>。'+link(overview, '查看报告总目录与历史封存')+'。分档是自动初筛，未逐张人工验收；残留和识别正确率不能可靠测量时保持未评估。</p><p>10 月 29 日斜字方向实验完成 16 页次开发对照：目标仍未检测成功，新旧选区和输出相同，干净界面耗时增加超限，候选继续默认关闭。工程检查通过不能代替图像质量验收。</p><details><summary>当前应用与观察基线不同的文件</summary><pre>'+escape('\n'.join(f['changed_application_files']) or '无')+'</pre></details>'),
         ('limits', '还没有解决什么', '<ul><li>部分照片和淡字仍漏检，选区可能混入背景或漏掉笔画。</li><li>正文、数字和纹理可能被修复损伤；部分 PDF 复杂结构仍需回退处理。</li><li>真实非配对图片缺精确答案，不能自动给出成功率。</li><li>已反复查看和调参的样本属于开发／回归用途；独立泛化验证尚未成立。</li></ul><p>这些问题继续登记在失败记录中，算法修复另立任务，先保存基线再比较。</p>'),
-        ('work', '接下来如何使用', '<p>日常先运行 <code>./start.sh test --plan</code>，再运行 <code>./start.sh test</code>。发布或更新默认基线必须另跑 <code>./start.sh test-release</code>，完成必要的独立验证。数据登记、文档整理不会自动更新默认基线。</p><p>'+link('代码与工具用途说明.html', '代码与工具用途')+' · '+link('项目文档总览.html', '全部说明入口')+' · '+link('项目现状与后续开发说明_历史20261027.html', '10 月 27 日现状说明原件')+'</p>')], date)
+        ('work', '接下来如何使用', '<p>工程测试运行 <code>./start.sh test</code>。图像效果回归：<code>tools/layered_samples.py run</code> 跑分层数据集控制轮，报告里人工定档后由 <code>tools/archive_classified.py</code> 归档进效果分类数据集；发布或更新默认基线用 <code>./start.sh freeze-baseline</code> 与 <code>./start.sh control promote</code>。数据登记、文档整理不会自动更新默认基线。</p><p>'+link('代码与工具用途说明.html', '代码与工具用途')+' · '+link('项目文档总览.html', '全部说明入口')+' · '+link('项目现状与后续开发说明_历史20261027.html', '10 月 27 日现状说明原件')+'</p>')], date)
     catalog = tool_catalog()
     groups = Counter(row[1] for row in catalog)
     directory_rows = [
@@ -180,24 +193,20 @@ def render(f, date):
         ('backup', 'Git 和本机备份', '<p>程序、工程测试、通用维护脚本、README、架构和长期流程说明通过 Git 保存；当前生成的 HTML 说明与报告只留本机，不进入普通提交。</p><p><code>data/</code>、全部 <code>out/</code>、模型缓存及本机基线指针采用单独资源包或本机备份；2026-11-02 已从当前版本取消追踪本地报告和展示素材；本地原件保留；随后按用户要求清理了新仓库全部分支与标签历史，原仓库和 Release 不改动。<code>proposal/</code>、个人修图工具与配置、内部计划和临时图表不进入新版本。</p><p>换电脑时要另外保存：当前数据与来源、模型、完整封存基线及其资源、尚未入库的方案材料。可选修图配置可能包含密钥，保留在本机，不直接加入仓库。Git 精确状态见本轮整理记录。</p>')], date)
     data = page('数据集清单与清理', [
         ('sets', '当前只有三套工作数据', inventory_note+count_table+'<p>数据名称中的“训练”表示准备用途，不表示已完成模型训练。固定集和应用批次存在来源重叠，不能把各项直接相加为独立样本数。</p>'),
-        ('paths', '输入和答案在哪里', table(['位置', '用途'], [(link('../data/dataset_registry.json','数据登记表'), '当前数量与用途，由实际清单更新。'), (link('../data/watermark_training_v1/manifest.jsonl','基础清单'), '按图片／PDF 文档记录；保留原 train、validation、test 划分。'), (link('../data/watermark_training_increment_v1_1/training_tasks.jsonl','129 条统一任务清单'), '严格、近似、检测专用分开；原 121 条 manifest 继续兼容。'), (link('../data/watermark_regression_min_v1/manifest.jsonl','固定回归清单'), '当前 '+str(c['fixed_inputs'])+' 个输入。inputs/ 交给程序；references/ 只供处理后评分。')])+'<p>原始收件、授权记录、应用测试批次、网站参照和历史输出分别保留，不能因目录里仍有历史素材就算入当前固定集。</p>'),
+        ('paths', '输入和答案在哪里', table(['位置', '用途'], [(link('../data/dataset_registry.json','数据登记表'), '当前数量与用途，由实际清单更新。'), ('data/分层数据集/', '单变量变化生成的效果测试数据（layered_samples.py prepare）。'), ('data/效果分类数据集/', '人工定档归档的三个数据集（archive_classified.py），每样本含判定记录。'), ('data/_archive/（已删除）', '旧训练语料与固定回归集原在此留档，2026-11-23 起按新规则直接删除，不再保留。')])+'<p>输入与评分答案分开；干净图、alpha 和标注不能用于决定当前单图选区或处理结果。</p>'),
         ('retired', '已经退役和移除的范围', '<p>旧 real_samples、syn、公开 40 对样本及配套旧格式已经退役。应用测试输入里的历史来源副本仍按批次保留，不代表恢复旧默认入口。</p><p>10 月 29 日仅从固定回归和当前效果页移除 real_001、real_002、real_004；原始采集、训练来源和历史封存继续按用途保留。'+link('../config/regression.json','查看回归配置（含移除授权与哈希）')+'。范围变化不算质量提升。</p><p>'+link('数据集清单与清理_历史20261026.html','查看 10 月 26 日历史清理说明')+'；历史清理收据记录当时状态，不能据此承诺目前还能从废纸篓恢复。</p>'),
-        ('check', '怎样检查', '<pre>./start.sh check-data\n./start.sh control-inventory\n./start.sh test --plan\n./start.sh test</pre><p>check-data 只验证固定文件和清单；test 按实际修改选择范围；发布用 test-release。当前独立泛化验证尚未成立。</p>')], date)
-    case_rows = [(escape(r['case_id']),escape(r.get('label') or r['subtype']),str(r['page_count']), '无水印对照' if r['negative'] else escape(r['score_mode']),link('../data/watermark_regression_min_v1/'+r['paths']['input'],'输入')) for r in f['fixed']]
-    fixed = page('最小回归测试集', [
-        ('scope', '当前测试范围', f'<p class="note"><strong>{c["fixed_inputs"]} 个输入／{c["fixed_pages"]} 张页：核心 {c["core"]} 个＋真实扩展 {c["real"]} 个。</strong>这是开发回归集，用来发现退化，不能证明通用成功率。</p><p>核心包含 22 种图片样式、11 种 PDF 子类及无水印对照。真实扩展属于开发来源；缺精确配对的图片须人工复核。</p>'),
-        ('run', '日常检查和固定集诊断', '<pre>./start.sh check-data\n./start.sh test --plan\n./start.sh test\n# 只诊断固定集，不代替完整防退化验收\nHF_HUB_OFFLINE=1 .venv/bin/python tools/run_min_regression.py --suite all</pre><p>三种模式分别是桌面默认、桌面关闭补全、CLI 默认。固定集诊断不自动开启桌面默认补全；要按记录的开关判断覆盖范围。完整发布仍用 test-release。</p>'),
-        ('cases', '完整输入清单', table(['ID','样本','页数','评分条件','原图'],case_rows)),
-        ('missing', '仍缺少的覆盖', '<ul>'+''.join('<li>'+escape(r['type'])+'：'+escape(r.get('reason') or r['status'])+'</li>' for r in f['coverage']['missing_or_incomplete'])+'</ul><p>'+link('../data/watermark_regression_min_v1/coverage.json','覆盖与缺口清单')+' · '+link('../data/watermark_regression_min_v1/file_hashes.json','固定文件哈希')+'</p>')], date)
+        ('check', '怎样检查', '<pre>./start.sh test   # 工程单元测试全量\n# 图像效果回归：分层控制轮 → 报告定档 → 归档\nHF_HUB_OFFLINE=1 .venv/bin/python tools/layered_samples.py run --dataset-dir <数据集>\n.venv/bin/python tools/archive_classified.py --json 效果定档_*.json</pre><p>check-data 与固定集诊断已随固定回归集退役（2026-11-23）。当前独立泛化验证尚未成立。</p>')], date)
+    fixed = page('最小回归测试集（已退役）', [
+        ('scope', '退役说明', '<p class="note"><strong>固定回归集（43 个输入／59 张页）已于 2026-11-23 整体删除</strong>，登记见 config/regression.json 的 retirements 节；测试口径切换为分层数据集＋效果定档，成绩自首个分层控制轮（2026-11-23）重新积累。本页仅保留退役说明，原输入清单与参考随删除不再链接。</p>'),
+        ('cases', '原完整输入清单', '<p>原核心 36 例（22 种图片样式、11 种 PDF 子类及无水印对照）＋真实扩展 7 例的逐条清单已随数据删除；如需追溯历史成绩口径，见 config/regression.json 的退役登记。</p>')], date)
     portal_rows = [
         ('当前说明','项目现状与后续开发说明.html','项目现状','现在的功能、限制、默认与实验边界。'),
         ('当前说明','去水印处理流程图.md','实际处理流程','按实际代码维护，从导入到导出。'),
         ('当前说明','去水印机制与流程总览.html','机制通俗总览','汇总全部机制的流程说明：各管什么、何时触发、边界在哪；由 tools/build_mechanism_overview.py 生成，细节以流程图文档为准。'),
         ('当前说明','代码与工具用途说明.html','代码与工具用途','目录职责、全部顶层工具、运行与备份入口。'),
-        ('当前说明','数据集清单与清理.html','数据用途与数量','三套数据、来源与评分边界、历史清理入口。'),
-        ('当前说明','最小回归测试集.html','固定回归范围',f'{c["fixed_inputs"]} 个输入、{c["fixed_pages"]} 张页与明确缺口。'),
-        ('观察基线',overview,'基线效果总览','10 月 28 日封存结果，10 月 29 日按保留范围展示；不是当前代码全量验收。'),
-        ('问题记录','去水印失败案例记录.html','已知失败记录','历史与基线代表证据，尚未解决的问题。'),
+        ('当前说明','数据集清单与清理.html','数据用途与数量','当前工作数据（分层数据集、效果分类数据集）、来源与评分边界。'),
+        ('观察基线',overview,'报告总目录与历史封存','首个分层控制轮（2026-11-23）起重新积累成绩；旧固定集基线已按新规则删除。'),
+        ('问题记录','提示词去水印典型问题记录_20261109.md','已知失败与待解决问题记录','历史与基线代表证据，尚未解决的问题。'),
         ('实验与全部报告','../out/水印验证报告总目录.html','报告总目录','按观察基线、管控、诊断、实验、历史、方案分类。'),
         ('样本目录与历史测试','水印分类样本与最新测试.html','样本与分类目录','文件名保留兼容；页内测试对应历史版本，“最新”不能代表当前验收。'),
         ('训练准备','真实样本训练标注.html','真实样本标注','标注用于训练准备；检测框与近似配对不能当精确修复答案。'),
@@ -213,8 +222,6 @@ def render(f, date):
         ('历史技术说明','项目技术文档.md','10 月 21 日技术文档','保留早期设计与能力判断，不能替代当前状态或实际流程。'),
         ('历史功能清单','功能矩阵.md','早期编号功能矩阵','历史编号和证据定位；当前效果与完成状态需看当前说明。'),
         ('历史评测','评测记录-2026-10-22-真实素材.md','10 月 22 日真实素材记录','早期样本和环境条件，保留追溯。'),
-        ('开发研究','去水印算法最小对比_2026-10-27.md','10 月 27 日算法比较','研究与路线判断，不表示候选已接入。'),
-        ('历史评测方案','水印覆盖与竞品评测方案_2026-10-26.docx','10 月 26 日评测方案 Word','既有方案原件，不能当作已完成比较的成绩。'),
         ('历史迁移说明','../MIGRATION.md','早期跨机迁移说明','历史环境与旧数据入口供追溯，当前安装以资源放置说明为准。'),
         ('当前说明','knowme.md','项目认知文档（knowme）','当前架构、技术栈、核心逻辑与运行入口；唯一 knowme 版本。'),
         ('后续任务草案','../下一步优化任务.md','算法优化任务草案','后续研究计划，不代表已经实现或验收。'),
@@ -225,7 +232,7 @@ def render(f, date):
         ('documents','每份文档的用途',table(['类型','入口','说明'],[(escape(a),link(b,d),escape(e)) for a,b,d,e in portal_rows])),
         ('maintenance','以后怎样保持清楚','<p>实际样本清单决定数量，版本记录决定成绩对应的代码，README 只保留入口。维护工具从清单生成当前状态、数据说明和工具目录；不从旧报告复制数字。</p><pre>.venv/bin/python tools/organize_project_docs.py\n.venv/bin/python tools/organize_project_docs.py --check\n.venv/bin/python tools/build_mechanism_overview.py\n.venv/bin/python tools/build_report_index.py</pre>')], date)
     return {'项目现状与后续开发说明.html':status,'项目文档总览.html':portal,
-            '数据集清单与清理.html':data,'最小回归测试集.html':fixed,'代码与工具用途说明.html':guide}
+            '数据集清单与清理.html':data,'代码与工具用途说明.html':guide}
 
 
 def registry_and_readmes(f, date):
@@ -262,23 +269,24 @@ def registry_and_readmes(f, date):
         item['detail']=item['detail'].replace('现有回归脚本仍引用','历史回归曾引用，已停用旧直接入口').replace('启动/工程测试仍引用','早期启动/测试曾引用，当前使用固定集')
     readme=f'''数据目录总入口（{date}）
 
-当前只有 3 套工作数据，数量来自实际清单：
-1. watermark_training_v1：{c['base']} 条图片/PDF文档记录；训练准备用途。
-2. watermark_training_increment_v1_1：{c['tasks']} 个不重复任务样本。
-   {c['strict']} 严格配对＋{c['approximate']} 近似配对＋{c['detection_only']} 检测专用；修复视图{c['restoration']}、检测视图{c['detection']}，不能相加。
-3. watermark_regression_min_v1：{c['fixed_inputs']} 个输入／{c['fixed_pages']} 张页，核心{c['core']}＋真实扩展{c['real']}。
-   派生开发回归集，不增加独立来源，不能证明通用成功率。
+当前工作数据：
+1. 分层数据集（data/分层数据集/）：单变量变化生成（tools/layered_samples.py prepare），当前斜向平铺_白底 13 张；效果测试与定档来源。
+2. 效果分类数据集（data/效果分类数据集/）：效果好／提示词可处理／待解决 三目录，人工定档归档（tools/archive_classified.py），防退化回归对象。
 
-完整应用管控另包括批次与历史来源，共{c['control_inputs']}个输入场景／{c['control_pages']}张页；三模式{c['mode_pages']}页次，包含重复来源。
+以下三套已于 2026-11-23 退役，留档在 data/_archive/，不再作为当前工作数据：
+1. watermark_training_v1：{c['base']} 条图片/PDF文档记录；历史训练准备。
+2. watermark_training_increment_v1_1：{c['tasks']} 个不重复任务样本。
+   {c['strict']} 严格配对＋{c['approximate']} 近似配对＋{c['detection_only']} 检测专用。
+3. watermark_regression_min_v1：{c['fixed_inputs']} 个输入／{c['fixed_pages']} 张页，核心{c['core']}＋真实扩展{c['real']}。
+   退役登记见 config/regression.json 的 retirements 节。
+
 应用完整清单状态：{'发现未登记文件，检查未通过；详见 dataset_registry.json 的 application_inventory' if f['inventory_error'] else '清单核对通过，不等于效果合格'}。
-原始收件 manual_collections、base_photos、20250227.pdf 保留；应用测试输入、网站参照另存，不另算训练集。
-旧 real_samples、syn、公开40对及配套旧格式已退役；当前固定集已移除三张手写样本，原始来源和封存记录按用途保留。
 输入与评分答案分开。训练清单或检测框不是当前单图推理的输入。
 训练数据已准备不代表已经训练模型。
 独立验证集 v1（2026-11-02 建成）：data/watermark_independent_v1，60 正例＋6 负例；与 v1 及开发图零重叠（QA 见集内 qa/validation.json）；一次性基线后锁柜，看过即降级；基线数字不代表当前算法已通过泛化验证。
 
-日常检查：./start.sh test --plan，然后 ./start.sh test。
-固定数据校验：./start.sh check-data。发布：./start.sh test-release。
+工程单元测试：./start.sh test。
+图像效果回归：tools/layered_samples.py run 分层控制轮 → 报告定档 → tools/archive_classified.py 归档。
 登记表：dataset_registry.json；说明：../docs/数据集清单与清理.html。
 更新说明：.venv/bin/python tools/organize_project_docs.py。
 历史清理收据保持原记录，不能据此承诺废纸篓目前可恢复。
@@ -293,9 +301,8 @@ def registry_and_readmes(f, date):
 
 输入：inputs/core/、inputs/real/。参考：references/，只能在推理结束后评分使用。
 清单：manifest.jsonl；覆盖与缺口：coverage.json；固定文件哈希：file_hashes.json。
-日常：./start.sh test --plan，然后 ./start.sh test；发布：./start.sh test-release。
-固定集诊断：HF_HUB_OFFLINE=1 .venv/bin/python tools/run_min_regression.py --suite all。
-固定集诊断不是完整三模式防退化验收，也不保证启用桌面默认笔画补全。
+本套数据已于 2026-11-23 退役（登记见 config/regression.json 的 retirements 节），留档仅作追溯。
+当前效果回归：tools/layered_samples.py run 分层控制轮 → 报告定档 → tools/archive_classified.py 归档。
 说明与原图入口：../../docs/最小回归测试集.html。
 '''
     return registry,readme,fixed
@@ -306,12 +313,12 @@ def readme_counts(f):
     block = f'''<!-- current-dataset-counts:start -->
 | 数据 | 当前数量 | 用途 |
 |---|---|---|
-| 基础数据 | {c['base']:,} 条图片／PDF 文档记录 | 训练准备与开发，保留原分组 |
-| 人工增量 | {c['tasks']} 个不重复任务样本 | {c['strict']} 严格配对＋{c['approximate']} 近似配对＋{c['detection_only']} 检测专用；原{c['strict']}条清单保留兼容 |
-| 固定回归 | {c['fixed_inputs']} 个输入／{c['fixed_pages']} 张页 | 核心{c['core']}＋真实扩展{c['real']}，用来检查退化 |
+| 分层数据集 | data/分层数据集/（斜向平铺_白底 13 张起） | 单变量变化生成，效果测试与定档来源 |
+| 效果分类数据集 | 效果好／提示词可处理／待解决 三目录 | 人工定档归档，防退化回归对象 |
+| 独立验证集 | data/watermark_independent_v1（锁柜） | 一次性基线后冻结，看过即降级 |
 
-完整管控覆盖{c['control_inputs']}个输入场景／{c['control_pages']}张页，三种模式共{c['mode_pages']:,}页次，包含批次重复来源。以上数量不能直接相加为独立图片数，也不代表已完成模型训练。
-{'当前发现未登记副本，完整清单检查未通过；文件保留原位，详情见当前说明。' if f['inventory_error'] else '当前应用清单已核对，清单一致不表示效果合格。'}
+固定回归集与旧训练语料已于 2026-11-23 退役并直接删除（登记见 config/regression.json 的 retirements 节）；历史成绩作废，当前口径以分层控制轮为准。
+{'旧应用输入已删除；完整清单检查不再适用。' if f['counts'].get('inputs_deleted') else '当前应用清单已核对，清单一致不表示效果合格。'}
 <!-- current-dataset-counts:end -->'''
     old = (ROOT / 'README.md').read_text()
     new, count = re.subn(r'<!-- current-dataset-counts:start -->.*?<!-- current-dataset-counts:end -->', lambda _: block, old, flags=re.S)
@@ -350,14 +357,14 @@ def main(argv=None):
         registry,readme,fixed=registry_and_readmes(f,date)
         # Byte totals include the generated readmes, and settle after generation.
         registry_drift=f['registry']!=registry
-        for p,content in [(ROOT/'data/README.txt',readme),(ROOT/'data/watermark_regression_min_v1/README.txt',fixed)]:
+        for p,content in [(ROOT/'data/README.txt',readme)]+([(ROOT/'data/_archive/固定回归退役_20261123/watermark_regression_min_v1/README.txt',fixed)] if (ROOT/'data/_archive/固定回归退役_20261123/watermark_regression_min_v1').is_dir() else []):
             if not p.exists() or p.read_text()!=content:drift.append(str(p.relative_to(ROOT)))
         if (ROOT/'README.md').read_text() != readme_counts(f):drift.append('README.md')
         result=dict(status='passed',scope='仅文档一致性与链接',counts=f['counts'],generated_document_drift=drift,registry_drift=registry_drift,inventory_error=f['inventory_error'],unregistered_files=f['unregistered'],links=check_links(paths+[ROOT/'README.md']))
         if drift or registry_drift or result['links']['missing'] or result['links']['document_link_tails']:result['status']='failed'
         print(json.dumps(result,ensure_ascii=False,indent=2));return int(result['status']!='passed')
     out=(args.out or ROOT/'out/项目整理'/datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y%m%d_%H%M%S_%f_说明更新')).resolve();out.mkdir(parents=True,exist_ok=False)
-    for p in paths+[ROOT/'README.md',ROOT/'data/dataset_registry.json',ROOT/'data/README.txt',ROOT/'data/watermark_regression_min_v1/README.txt']:
+    for p in paths+[ROOT/'README.md',ROOT/'data/dataset_registry.json',ROOT/'data/README.txt']+([ROOT/'data/_archive/固定回归退役_20261123/watermark_regression_min_v1/README.txt'] if (ROOT/'data/_archive/固定回归退役_20261123/watermark_regression_min_v1').is_dir() else []):
         if p.exists():
             target=out/'更新前备份'/p.relative_to(ROOT);target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,target)
     for name in ['项目现状与后续开发说明','数据集清单与清理']:
@@ -366,13 +373,12 @@ def main(argv=None):
     for name,content in pages.items():(DOCS/name).write_text(content)
     (ROOT/'README.md').write_text(readme_counts(f))
     registry,readme,fixed=registry_and_readmes(f,date)
-    (ROOT/'data/README.txt').write_text(readme);(ROOT/'data/watermark_regression_min_v1/README.txt').write_text(fixed)
+    (ROOT/'data/README.txt').write_text(readme)
+    if (ROOT/'data/_archive/固定回归退役_20261123/watermark_regression_min_v1').is_dir():(ROOT/'data/_archive/固定回归退役_20261123/watermark_regression_min_v1/README.txt').write_text(fixed)
     registry,_,_=registry_and_readmes(f,date)
     (ROOT/'data/dataset_registry.json').write_text(json.dumps(registry,ensure_ascii=False,indent=2)+'\n')
     result=dict(version=VERSION,date=date,counts=f['counts'],source_sha256=f['source_sha256'],baseline_seal=f['baseline_seal'],changed_application_files=f['changed_application_files'],inventory_error=f['inventory_error'],unregistered_files=f['unregistered'],links=check_links(paths+[ROOT/'README.md']),inference_run=False,independent_validation=False,algorithm_changed=False,history_preserved=True)
     (out/'整理范围与来源.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
     print(json.dumps(dict(out=str(out),counts=f['counts'],links=result['links']),ensure_ascii=False,indent=2))
     return int(bool(result['links']['missing'] or result['links']['document_link_tails']))
-
-
 if __name__=='__main__':raise SystemExit(main())

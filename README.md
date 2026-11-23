@@ -20,11 +20,10 @@
 git clone git@github.com:RedCreationTech/offline-dewatermark.git
 cd offline-dewatermark
 ./start.sh setup       # 首次准备依赖与模型，可能需要联网
-./start.sh check-data  # 放好数据后校验，不运行模型
 ./start.sh gui         # 打开桌面程序
 ```
 
-Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），子命令与 `./start.sh` 完全一致，例如 `start.bat gui`、`start.bat check-data`；脚本内部已处理虚拟环境路径与 UTF-8 编码。
+Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），子命令与 `./start.sh` 完全一致，例如 `start.bat gui`；脚本内部已处理虚拟环境路径与 UTF-8 编码。
 
 日常使用已有本地依赖和模型；严格离线部署须提前准备资源和对应平台的 Python 依赖。图片输入与评分参考分开，干净图、alpha 和标注不能用于决定当前单图选区或处理结果。
 
@@ -35,29 +34,28 @@ Windows（PowerShell/cmd）使用等价的 `start.bat`（或 `start.ps1`），�
 <!-- current-dataset-counts:start -->
 | 数据 | 当前数量 | 用途 |
 |---|---|---|
-| 基础数据 | 2,432 条图片／PDF 文档记录 | 训练准备与开发，保留原分组 |
-| 人工增量 | 129 个不重复任务样本 | 121 严格配对＋3 近似配对＋5 检测专用；原121条清单保留兼容 |
-| 固定回归 | 43 个输入／59 张页 | 核心36＋真实扩展7，用来检查退化 |
+| 分层数据集 | data/分层数据集/（斜向平铺_白底 13 张起） | 单变量变化生成，效果测试与定档来源 |
+| 效果分类数据集 | 效果好／提示词可处理／待解决 三目录 | 人工定档归档，防退化回归对象 |
+| 独立验证集 | data/watermark_independent_v1（锁柜） | 一次性基线后冻结，看过即降级 |
 
-完整管控覆盖395个输入场景／423张页（桌面默认模式），包含批次重复来源。以上数量不能直接相加为独立图片数，也不代表已完成模型训练。
-当前应用清单已核对，清单一致不表示效果合格。
+固定回归集与旧训练语料已于 2026-11-23 退役并直接删除（登记见 config/regression.json 的 retirements 节）；历史成绩作废，当前口径以分层控制轮为准。
+旧应用输入已删除；完整清单检查不再适用。
 <!-- current-dataset-counts:end -->
 
-上述数量是已有本地清单的记录，不代表数据随 Git 提供。实际来源、清单和封存证据需另外备份。旧 real_samples、syn、公开40对样本及旧入口已经退役；三张手写样本的移除范围见 [退役记录](config/regression_retirements.json)，不得通过恢复旧包重新加入当前回归。
+上述数量是已有本地清单的记录，不代表数据随 Git 提供。实际来源、清单和封存证据需另外备份。旧 real_samples、syn、公开40对样本及旧入口已经退役；三张手写样本的移除范围见 [回归配置](config/regression.json) 的 `retirements.previous`，不得通过恢复旧包重新加入当前回归。
 
 ## 测试与质量边界
 
 ```bash
-./start.sh test --plan  # 先看实际修改需要检查什么
-./start.sh test         # 按影响执行日常检查
-./start.sh test-release # 发布或更新默认基线前完整对照
+./start.sh test         # 工程单元测试全量（约 340 项）
+# 图像效果回归：跑分层数据集控制轮 → 报告里人工定档 → 归档（见下「效果分类数据集」）
 ```
 
-本机已有观察基线时继续沿用。首次在其他机器建立基线使用 `./start.sh freeze-baseline`，它只记录现状，包括缺陷。[回归配置](config/regression.json) 中的 `control` 与 `tiers` 分别定义放行门槛和分层范围。数据、模型和可比较基线缺失时不能宣称验收完成。
+首次建立观察基线使用 `./start.sh freeze-baseline`，它只记录现状，包括缺陷。[回归配置](config/regression.json) 的 `control` 节定义控制轮放行门槛。数据、模型和可比较基线缺失时不能宣称验收完成。
 
 有 NVIDIA 显卡的机器可在任意子命令后加 `--gpu`：WeVisOne 分割探针用 `cuda:0`；LaMa 仅当主环境装有可用的 CUDA 版 onnxruntime 时才走 `WM_LAMA_CUDA=1`，否则保持 CPU 并提示。示例：`./start.sh gui --gpu`（或 `start.bat gui --gpu`）；`./start.sh wevisone --gpu [提示词] [图片]` 单独跑 WeVisOne 单图分割探针（默认 cpu），输出到 `out/WeVisOne环境检查_NN`。注意：现网 LaMa 量化模型在 CUDA 12 版 onnxruntime 上缺少量化算子支持、DirectML 亦不支持其 FFC 结构，本机经实测只能在 CPU 运行；未来如升级驱动与 CUDA 13 运行时，该模型在 CUDA 13 版 onnxruntime 上的可用性需重新实测。
 
-`check-data` 只证明清单校验通过；固定集诊断、工程测试及局部实验不能替代完整发布放行或独立验证。
+工程单元测试、分层控制轮单组通过与局部实验不能替代完整放行（全部变量组控制轮通过）或独立验证。
 
 纸面彩色阴影文字分层反解已在 2026-10-29 接入默认处理；表格残影、正常彩色内容保护和耗时问题仍未解决。部分照片和淡字存在漏检，正文、数字、纹理可能受损；无可靠参考时保持待复核，不将未知质量计为成功。已有实验细节保留在本地报告中，实际行为以长期流程说明和源码为准。
 
@@ -71,6 +69,14 @@ HF_HUB_OFFLINE=1 .venv/bin/python tools/layered_samples.py run --dataset-dir out
 ```
 
 第二条命令按桌面默认参数冻结并运行样本，将逐页结果写入 `out/项目防退化控制/`，并更新本地报告总目录。合成测试用于核对样本表现和报告链路，独立泛化验证另行开展。
+
+**效果分类数据集**：每轮测试后在明细报告里人工定档（卡片按钮或按 1/2/3 选 效果好／提示词可处理／待解决，机器只按 召回≥98% 且 精确率≥90% 预筛候选），点「导出任档结果」后归档进三个数据集：
+
+```bash
+.venv/bin/python tools/archive_classified.py --json 效果定档_*.json   # 在浏览器下载目录里找到导出的 JSON
+```
+
+三个数据集在 `data/效果分类数据集/`（效果好／提示词可处理／待解决），每样本附判定记录。定档标准与流程见该目录 README.md。
 
 自动比较处理方法候选默认关闭，尚未通过完整放行与独立来源验证，不建议作为默认处理：
 

@@ -108,7 +108,7 @@ def prepare(out, inventory, scope, selection_plan=None):
             dest = snapshot / path.relative_to(ROOT)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(path, dest)
-    for name in ('regression_control.py', 'regression_guard.py', 'regression_layers.py', 'regression_retirements.py', 'control_inventory.py', 'run_min_regression.py'):
+    for name in ('regression_control.py', 'regression_guard.py', 'regression_layers.py', 'regression_retirements.py', 'control_inventory.py', 'build_control_reports.py'):
         shutil.copyfile(ROOT / 'tools' / name, snapshot / 'tools' / name)
     code_hashes = {str(p.relative_to(snapshot)): digest(p) for p in snapshot.rglob('*') if p.is_file()}
     identity, weights = runtime()

@@ -39,7 +39,12 @@ SIZE_LEVELS = [("tiny", 0.50, "小字28px·10pt", "小字28"),
                ("small", 0.72, "小字40px·14pt", "小字40"),
                ("base", 1.0, "基准56px·20pt", "尺寸基准"),
                ("large", 1.43, "大字80px·29pt", "大字80")]
-GROUP_LABEL = {"opacity": "透明度组", "color": "颜色组", "size": "尺寸组", "bg": "底图组"}
+# 分辨率组：只变扫描分辨率，水印物理尺寸不变（字号像素随 dpi 等比缩放）。
+# None 表示跟随 --dpi（即基准分辨率）；109.5dpi 按 A4 公式正好渲染出 906×1280。
+RESOLUTION_LEVELS = [("base", None, "基准200dpi·1654×2338", "分辨率基准"),
+                     ("small", 109.5, "低分辨率906×1280", "低分辨率906")]
+GROUP_LABEL = {"opacity": "透明度组", "color": "颜色组", "size": "尺寸组", "bg": "底图组",
+               "resolution": "分辨率组"}
 BG_LABEL = {"white": "纯白纸", "photo": "照片", "document": "文档"}
 BASE = {"bg": "white", "strength": BASE_STRENGTH, "color": "gray", "size": 1.0}
 
@@ -71,23 +76,29 @@ def oblique_alpha(shape, px: int, dpi: int = 200) -> tuple[np.ndarray, dict]:
     return alpha.astype(np.float32) / 255.0, params
 
 
-def load_bases(bg_levels: list[str], base_dir: Path, out_dir: Path, dpi: int,
-               seed: int) -> dict[str, tuple[Path, np.ndarray]]:
-    bases: dict[str, tuple[Path, np.ndarray]] = {}
-    for bg in bg_levels:
-        reused = sorted(base_dir.glob(f"*_{bg}_clean.png")) if base_dir.is_dir() else []
+def page_px(dpi: float) -> tuple[int, int]:
+    """与 wm.synth.render_clean_page 的 A4 尺寸公式保持一致。"""
+    return int(round(8.27 * dpi)), int(round(11.69 * dpi))
+
+
+def load_bases(levels: list[dict], base_dir: Path, out_dir: Path,
+               seed: int) -> dict[tuple[str, float], tuple[Path, np.ndarray]]:
+    bases: dict[tuple[str, float], tuple[Path, np.ndarray]] = {}
+    for bg, dpi in dict.fromkeys((lv["bg"], float(lv["dpi"])) for lv in levels):
+        w, h = page_px(dpi)
+        reused = sorted(base_dir.glob(f"*_{bg}_{w}x{h}_clean.png")) if base_dir.is_dir() else []
         if reused:
             path = reused[0]
-            bases[bg] = (path, np.asarray(Image.open(path).convert("RGB")))
+            bases[(bg, dpi)] = (path, np.asarray(Image.open(path).convert("RGB")))
             continue
         own = out_dir / "_底图"
         own.mkdir(parents=True, exist_ok=True)
-        path = own / f"base_{bg}_clean.png"
+        path = own / f"base_{bg}_{w}x{h}_clean.png"
         if not path.is_file():
             clean = render_clean_page(random.Random(seed + BG_TYPES.index(bg)),
                                       dpi, 0, bg_type=bg)
             Image.fromarray(clean).save(path)
-        bases[bg] = (path, np.asarray(Image.open(path).convert("RGB")))
+        bases[(bg, dpi)] = (path, np.asarray(Image.open(path).convert("RGB")))
     return bases
 
 
@@ -112,6 +123,10 @@ def plan(only: list[str], bgs: list[str], levels: list[str] | None = None) -> li
     if "bg" in only and len(bgs) > 1:
         for bg in bgs:
             push("bg", bg, bg, BG_LABEL.get(bg, bg), bg=bg)
+    if "resolution" in only:
+        for key, dpi, cell, name in RESOLUTION_LEVELS:
+            push("resolution", key, name, cell,
+                 **({} if dpi is None else {"dpi": dpi}))
     if not cells:
         raise SystemExit(f"--only 里没有可生成的组：{only}")
     return cells
@@ -121,14 +136,16 @@ def prepare_dataset(args: argparse.Namespace) -> None:
     cells = plan(args.only, args.bgs, args.levels)
     out_dir = args.out.resolve()
     out_dir.mkdir(parents=True, exist_ok=False)
-    bgs = list(dict.fromkeys(cell["level"]["bg"] for cell in cells))
-    bases = load_bases(bgs, args.base_dir, out_dir, args.dpi, args.seed)
+    for cell in cells:
+        cell["level"].setdefault("dpi", float(args.dpi))
+    bases = load_bases([c["level"] for c in cells], args.base_dir, out_dir, args.seed)
 
     samples = []
     for idx, c in enumerate(cells):
         level = c["level"]
-        base_path, base = bases[level["bg"]]
-        alpha, params = oblique_alpha(base.shape, BASE_PX * level["size"], args.dpi)
+        dpi = float(level["dpi"])
+        base_path, base = bases[(level["bg"], dpi)]
+        alpha, params = oblique_alpha(base.shape, BASE_PX * level["size"], dpi)
         rgb = np.array(COLOR_RGB[level["color"]], dtype=np.float64)
         strength = float(np.clip(level["strength"], 0.02, 0.95))
         watermarked = apply_watermark(base, alpha, rgb, strength)
@@ -155,7 +172,9 @@ def prepare_dataset(args: argparse.Namespace) -> None:
             "angle_deg": params["angle_deg"], "stagger": params["stagger"],
             "coverage": round(float((alpha > 0.5).mean()), 4),
             "corner_coverage_min": round(corner, 4),
-            "dpi": args.dpi, "degraded": bool(args.jpeg_q or args.noise),
+            "dpi": int(dpi) if dpi == int(dpi) else dpi,
+            "page_px": list(page_px(dpi)),
+            "degraded": bool(args.jpeg_q or args.noise),
             "base_file": str(base_path), "base_sha256": digest(base_path),
         })
 
@@ -166,10 +185,14 @@ def prepare_dataset(args: argparse.Namespace) -> None:
                         "row_mult": ROW_MULT, "stagger": STAGGER, "base_px": BASE_PX,
                         "base_strength": BASE_STRENGTH,
                         "note": "铺满对角平面后旋转裁回页面，四角与边缘含裁断残笔；"
-                                "列距行距随字号等比，故尺寸组只变尺寸不变密度"},
+                                "列距行距随字号等比，故尺寸组只变尺寸不变密度；"
+                                "分辨率组只变扫描分辨率，水印物理尺寸不变"
+                                "（字号像素随 dpi 等比缩放）"},
         "groups": {GROUP_LABEL[g]: sum(1 for s in samples if s["group_key"] == g)
                    for g in dict.fromkeys(c["group"] for c in cells)},
-        "bases": {bg: {"file": str(p), "sha256": digest(p)} for bg, (p, _) in bases.items()},
+        "bases": {f"{bg}_{w}x{h}": {"file": str(p), "sha256": digest(p)}
+                  for (bg, dpi), (p, _) in bases.items()
+                  for w, h in [page_px(dpi)]},
         "total_samples": len(samples),
         "note": "斜向平铺 OFAT 网格：每组自带基准，组间不交叉，底图逐格固定。"
                 "带 alpha 真值，仅用于效果分档与逐轮回归，不能充当独立泛化验证；"
@@ -335,14 +358,15 @@ def main() -> int:
     generator = commands.add_parser('prepare', help='生成单因素分层网格')
     generator.add_argument('--out', type=Path, required=True, help='本轮的新目录')
     generator.add_argument('--base-dir', type=Path, default=ROOT / 'out/分层测试集_v1/参考',
-                           help='复用干净底图的目录，找不到时在本轮渲染')
+                           help='复用干净底图的目录（按 底图_宽x高 匹配），找不到时在本轮渲染')
     generator.add_argument('--only', nargs='+', default=['opacity', 'color', 'size'],
-                           choices=['opacity', 'color', 'size', 'bg'])
+                           choices=['opacity', 'color', 'size', 'bg', 'resolution'])
     generator.add_argument('--levels', nargs='+', help='只生成指定档位键')
     generator.add_argument('--bgs', nargs='+', default=['white'], choices=BG_TYPES)
     generator.add_argument('--jpeg-q', type=int, default=0, help='JPEG 质量，0 表示不压缩')
     generator.add_argument('--noise', type=int, default=0)
-    generator.add_argument('--dpi', type=int, default=200)
+    generator.add_argument('--dpi', type=int, default=200,
+                           help='基准分辨率 dpi；分辨率组的 base 档跟随此值，small 档固定 109.5（906×1280）')
     generator.add_argument('--seed', type=int, default=20261110)
     control = commands.add_parser('run', help='冻结并运行已有分层样本')
     control.add_argument('--dataset-dir', type=Path, required=True)
