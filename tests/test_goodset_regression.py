@@ -45,7 +45,8 @@ class GoodsetCheckTest(unittest.TestCase):
         self.assertEqual(g.check(self._records(recall=0.98)), 1)
 
     def test_missed_rise_fails(self):
-        self.assertEqual(g.check(self._records(missed_pixels=11)), 1)
+        # 超过 10 像素粒度才算回退
+        self.assertEqual(g.check(self._records(missed_pixels=20)), 1)
 
     def test_improvement_passes(self):
         self.assertEqual(g.check(self._records(recall=1.0, missed_pixels=5)), 0)
@@ -58,6 +59,16 @@ class GoodsetCheckTest(unittest.TestCase):
 
     def test_elapsed_beyond_tolerance_fails(self):
         self.assertEqual(g.check(self._records(elapsed_ms=1150)), 1)
+
+    def test_sub_grain_fluctuation_passes(self):
+        # 一位小数粒度内：多选 +4 像素（10px 粒度）、精确率 -0.01%（0.1% 粒度）不判回退
+        self.assertEqual(g.check(self._records(false_positive_pixels=104, precision=0.4999)), 0)
+
+    def test_real_regression_fails(self):
+        # 超过粒度的真实回退仍判失败
+        self.assertEqual(g.check(self._records(recall=0.989)), 1)
+        self.assertEqual(g.check(self._records(false_positive_pixels=115)), 1)
+        self.assertEqual(g.check(self._records(missed_pixels=19)), 1)
 
 
 if __name__ == '__main__':

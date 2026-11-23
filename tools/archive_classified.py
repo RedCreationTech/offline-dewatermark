@@ -108,7 +108,9 @@ def archive(payload: dict, dataset_root: Path, force: bool) -> int:
             user_class=cls, machine_bucket=s.get('machine_bucket'),
             machine_candidate=s.get('machine_candidate'),
             preclass_thresholds=payload.get('preclass_thresholds'),
-            metrics={k: s.get(k) for k in (
+            # 指标优先取导出 JSON 里的；手工构造的导出可能不带，回退到运行记录，
+            # 避免把判定记录和基线的指标写成 null。
+            metrics={k: (s.get(k) if s.get(k) is not None else rec.get(k)) for k in (
                 'recall', 'precision', 'strong_recall', 'missed_pixels',
                 'false_positive_pixels', 'fp_frac', 'watermark_mae',
                 'background_mae', 'elapsed_ms', 'method', 'repair_mode')},

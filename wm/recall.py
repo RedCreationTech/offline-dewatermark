@@ -59,6 +59,17 @@ def _search_domain(shape, lines, extend_to_border=False):
         reach = max(shape) * 2 if extend_to_border else height
         extended[[0, 3]] -= direction*reach
         extended[[1, 2]] += direction*reach
+        if extend_to_border:
+            # 页面边缘裁掉的相邻行可能整行读不出 OCR（实测 s012 底缘：漏选行在
+            # 最近 OCR 行中线垂直方向约 77px 处，行方向延长盖不到）。把搜索域在
+            # 行的垂直方向两侧各加宽一个行高，让无 OCR 行的残笔进入搜索范围；
+            # 是否选中仍由证据门决定，不加无条件像素。
+            normal = np.array([-direction[1], direction[0]])
+            # 注意法向朝向：该 normal 对边 01 是“向内”，对边 23 也是“向内”，
+            # 两侧必须用同一法向的相反符号才能真正加宽（同号会内收成自交蝴蝶结，
+            # fillConvexPoly 填充不可控——V1.48 曾因此把加宽写成收窄，已纠正）。
+            extended[[0, 1]] -= normal*height
+            extended[[2, 3]] += normal*height
         cv2.fillConvexPoly(domain, np.rint(extended).astype(np.int32), 1)
     return domain > 0
 

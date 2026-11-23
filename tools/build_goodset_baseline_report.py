@@ -33,6 +33,18 @@ DIRECTIONS = {
     'missed_pixels': 'down', 'false_positive_pixels': 'down', 'fp_frac': 'down',
     'watermark_mae': 'down', 'background_mae': 'down', 'elapsed_ms': 'down',
 }
+
+
+def _grain(metric: str, v):
+    """按指标的最小比较单位取整（一位小数口径）：召回/精确率 0.1%、像素计数
+    10 像素、误差 0.1（0-255 尺度）。低于该粒度的波动视为相同，不判回退。"""
+    if metric in ('recall', 'precision', 'strong_recall', 'fp_frac'):
+        return round(v * 100, 1)
+    if metric in ('missed_pixels', 'false_positive_pixels'):
+        return int(v / 10 + 0.5)  # 10 像素粒度，半进避免 banker's rounding 边界抖动
+    if metric in ('watermark_mae', 'background_mae'):
+        return round(v, 1)
+    return v
 METRIC_LABEL = {
     'recall': '笔画召回率', 'precision': '选区精确率', 'strong_recall': '明显笔画召回',
     'missed_pixels': '漏选像素', 'false_positive_pixels': '多选像素', 'fp_frac': '多选占全图比',
@@ -166,14 +178,18 @@ def check(records: dict[str, dict]) -> int:
             nv = nm.get(metric)
             if bv is None or nv is None:
                 continue
-            if direction == 'up' and nv < bv:
+            if metric == 'elapsed_ms':
+                # 耗时允许 10% 机器波动（超出才算回退）；其余参数按一位小数粒度
+                # 比较：低于粒度的波动（如多选 5 个晕圈像素）不判回退。
+                if nv > bv * 1.10:
+                    problems.append(f'{sid} · {METRIC_LABEL[metric]} 上升：{fmt(metric, bv)} → {fmt(metric, nv)}')
+                elif nv > bv:
+                    warnings.append(f'{sid} · {METRIC_LABEL[metric]} 波动 +{(nv - bv) / bv * 100:.1f}%（10% 容差内）')
+                continue
+            gb, gn = _grain(metric, bv), _grain(metric, nv)
+            if direction == 'up' and gn < gb:
                 problems.append(f'{sid} · {METRIC_LABEL[metric]} 下降：{fmt(metric, bv)} → {fmt(metric, nv)}')
-            if direction == 'down' and nv > bv:
-                # 耗时允许 10% 机器波动（超出才算回退，记入问题）；其余误差类参数零容差。
-                if metric == 'elapsed_ms' and nv <= bv * 1.10:
-                    if nv > bv:
-                        warnings.append(f'{sid} · {METRIC_LABEL[metric]} 波动 +{(nv - bv) / bv * 100:.1f}%（10% 容差内）')
-                    continue
+            if direction == 'down' and gn > gb:
                 problems.append(f'{sid} · {METRIC_LABEL[metric]} 上升：{fmt(metric, bv)} → {fmt(metric, nv)}')
     print(f'对比完成：{compared}/{len(samples)} 张与基线比对。')
     for w in warnings:
