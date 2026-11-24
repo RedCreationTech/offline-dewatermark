@@ -49,6 +49,8 @@ SPACING_LEVELS = [("dense", 0.6, "密排·行距×0.6", "密排"),
 GROUP_LABEL = {"opacity": "透明度组", "color": "颜色组", "size": "尺寸组", "bg": "底图组",
                "resolution": "分辨率组", "spacing": "间距组"}
 BG_LABEL = {"white": "纯白纸", "photo": "照片", "document": "文档"}
+# 样本 id 里的底图前缀（白底不加前缀，保持历史批次 id 不变、不撞名）
+BG_SHORT = {"white": "", "photo": "照片底_", "document": "文档底_"}
 BASE = {"bg": "white", "strength": BASE_STRENGTH, "color": "gray", "size": 1.0}
 
 
@@ -142,8 +144,19 @@ def plan(only: list[str], bgs: list[str], levels: list[str] | None = None) -> li
 
 def prepare_dataset(args: argparse.Namespace) -> None:
     cells = plan(args.only, args.bgs, args.levels)
+    if args.base_bg != 'white':
+        # 底图跨全部档位：每个变量档只与白底孪生差底图一个变量，逐对对比。
+        for c in cells:
+            c['level']['bg'] = args.base_bg
     out_dir = args.out.resolve()
-    out_dir.mkdir(parents=True, exist_ok=False)
+    if out_dir.exists():
+        # 允许预置底图/来源留档（--base-bg 换底批次先放 _底图再生成），
+        # 其余任何残留都视为会混入旧数据，拒绝生成。
+        extra = [p.name for p in out_dir.iterdir()
+                 if p.name != '_底图' and not p.name.endswith('.pdf')]
+        if extra:
+            raise SystemExit(f'输出目录已存在且含其他内容：{out_dir}（{extra[:3]} 等）')
+    out_dir.mkdir(parents=True, exist_ok=True)
     for cell in cells:
         cell["level"].setdefault("dpi", float(args.dpi))
     bases = load_bases([c["level"] for c in cells], args.base_dir, out_dir, args.seed)
@@ -161,7 +174,8 @@ def prepare_dataset(args: argparse.Namespace) -> None:
         if args.jpeg_q or args.noise:
             watermarked = degrade(watermarked, random.Random(args.seed + idx),
                                   args.jpeg_q, args.noise)
-        sid = f"s{idx:03d}_{GROUP_LABEL[c['group']]}_{c['name']}"
+        bgpre = BG_SHORT.get(level['bg'], '')
+        sid = f"s{idx:03d}_{bgpre}{GROUP_LABEL[c['group']]}_{c['name']}"
         np.savez_compressed(out_dir / f"{sid}_gt.npz",
                             clean=base, alpha=alpha.astype(np.float32),
                             color=rgb.astype(np.float32), strength=np.float32(strength))
@@ -373,6 +387,9 @@ def main() -> int:
                            choices=['opacity', 'color', 'size', 'bg', 'resolution', 'spacing'])
     generator.add_argument('--levels', nargs='+', help='只生成指定档位键')
     generator.add_argument('--bgs', nargs='+', default=['white'], choices=BG_TYPES)
+    generator.add_argument('--base-bg', default='white', choices=BG_TYPES,
+                           help='底图变量跨全部档位：把所有档位的底图覆盖为指定类型'
+                                '（白底不加 id 前缀，非白底自动加 照片底_/文档底_ 前缀防撞名）')
     generator.add_argument('--jpeg-q', type=int, default=0, help='JPEG 质量，0 表示不压缩')
     generator.add_argument('--noise', type=int, default=0)
     generator.add_argument('--dpi', type=int, default=200,
