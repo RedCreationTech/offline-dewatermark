@@ -43,13 +43,17 @@ SIZE_LEVELS = [("tiny", 0.50, "小字28px·10pt", "小字28"),
 # None 表示跟随 --dpi（即基准分辨率）；109.5dpi 按 A4 公式正好渲染出 906×1280。
 RESOLUTION_LEVELS = [("base", None, "基准200dpi·1654×2338", "分辨率基准"),
                      ("small", 109.5, "低分辨率906×1280", "低分辨率906")]
+# 间距组：只变行距（垂直间距），字距 COL_MULT 不动；透明度/颜色/字号固定基准档。
+SPACING_LEVELS = [("dense", 0.6, "密排·行距×0.6", "密排"),
+                  ("sparse", 1.5, "疏排·行距×1.5", "疏排")]
 GROUP_LABEL = {"opacity": "透明度组", "color": "颜色组", "size": "尺寸组", "bg": "底图组",
-               "resolution": "分辨率组"}
+               "resolution": "分辨率组", "spacing": "间距组"}
 BG_LABEL = {"white": "纯白纸", "photo": "照片", "document": "文档"}
 BASE = {"bg": "white", "strength": BASE_STRENGTH, "color": "gray", "size": 1.0}
 
 
-def oblique_alpha(shape, px: int, dpi: int = 200) -> tuple[np.ndarray, dict]:
+def oblique_alpha(shape, px: int, dpi: int = 200,
+                  row_mult_scale: float = 1.0) -> tuple[np.ndarray, dict]:
     """按真实平铺写法生成覆盖图：铺满对角平面 → 旋转 → 裁回页面。"""
     h, w = shape[:2]
     scale = dpi / 200.0
@@ -58,7 +62,7 @@ def oblique_alpha(shape, px: int, dpi: int = 200) -> tuple[np.ndarray, dict]:
     probe = ImageDraw.Draw(Image.new("L", (10, 10)))
     tw = probe.textlength(TEXT, font=font)
     sx = int(round(tw * COL_MULT))
-    sy = int(round(px * 1.15 * ROW_MULT))
+    sy = int(round(px * 1.15 * ROW_MULT * row_mult_scale))
     diag = int(math.hypot(w, h)) + 2 * px
     layer = Image.new("L", (diag, diag), 0)
     draw = ImageDraw.Draw(layer)
@@ -72,7 +76,8 @@ def oblique_alpha(shape, px: int, dpi: int = 200) -> tuple[np.ndarray, dict]:
     x0, y0 = (diag - w) // 2, (diag - h) // 2
     alpha = np.asarray(layer, dtype=np.uint8)[y0:y0 + h, x0:x0 + w]
     params = dict(font_px=px, text_width_px=round(tw), spacing_x_px=sx,
-                  spacing_y_px=sy, angle_deg=ANGLE_DEG, stagger=STAGGER)
+                  spacing_y_px=sy, angle_deg=ANGLE_DEG, stagger=STAGGER,
+                  row_mult_scale=row_mult_scale)
     return alpha.astype(np.float32) / 255.0, params
 
 
@@ -127,6 +132,9 @@ def plan(only: list[str], bgs: list[str], levels: list[str] | None = None) -> li
         for key, dpi, cell, name in RESOLUTION_LEVELS:
             push("resolution", key, name, cell,
                  **({} if dpi is None else {"dpi": dpi}))
+    if "spacing" in only:
+        for key, mult, cell, name in SPACING_LEVELS:
+            push("spacing", key, name, cell, row_mult=mult)
     if not cells:
         raise SystemExit(f"--only 里没有可生成的组：{only}")
     return cells
@@ -145,7 +153,8 @@ def prepare_dataset(args: argparse.Namespace) -> None:
         level = c["level"]
         dpi = float(level["dpi"])
         base_path, base = bases[(level["bg"], dpi)]
-        alpha, params = oblique_alpha(base.shape, BASE_PX * level["size"], dpi)
+        alpha, params = oblique_alpha(base.shape, BASE_PX * level["size"], dpi,
+                                      row_mult_scale=float(level.get("row_mult", 1.0)))
         rgb = np.array(COLOR_RGB[level["color"]], dtype=np.float64)
         strength = float(np.clip(level["strength"], 0.02, 0.95))
         watermarked = apply_watermark(base, alpha, rgb, strength)
@@ -169,6 +178,7 @@ def prepare_dataset(args: argparse.Namespace) -> None:
             "color_name": level["color"], "color_rgb": [float(v) for v in rgb],
             "size_factor": level["size"], "font_px": params["font_px"],
             "spacing_px": [params["spacing_x_px"], params["spacing_y_px"]],
+            "row_mult_scale": round(float(level.get("row_mult", 1.0)), 3),
             "angle_deg": params["angle_deg"], "stagger": params["stagger"],
             "coverage": round(float((alpha > 0.5).mean()), 4),
             "corner_coverage_min": round(corner, 4),
@@ -360,7 +370,7 @@ def main() -> int:
     generator.add_argument('--base-dir', type=Path, default=ROOT / 'out/分层测试集_v1/参考',
                            help='复用干净底图的目录（按 底图_宽x高 匹配），找不到时在本轮渲染')
     generator.add_argument('--only', nargs='+', default=['opacity', 'color', 'size'],
-                           choices=['opacity', 'color', 'size', 'bg', 'resolution'])
+                           choices=['opacity', 'color', 'size', 'bg', 'resolution', 'spacing'])
     generator.add_argument('--levels', nargs='+', help='只生成指定档位键')
     generator.add_argument('--bgs', nargs='+', default=['white'], choices=BG_TYPES)
     generator.add_argument('--jpeg-q', type=int, default=0, help='JPEG 质量，0 表示不压缩')
