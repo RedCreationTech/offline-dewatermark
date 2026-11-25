@@ -1,0 +1,105 @@
+# 打包流水线：把 wm.app 桌面前端打成独立可执行目录（macOS / Windows）。
+#
+# 触发：推 main、打 v* 标签、或手动 Actions → 打包 → Run workflow。
+# 产物：Actions 运行页底部的 Artifacts（dewatermark-macos / dewatermark-windows），
+#       解压后整目录拷给目标机器即可运行（模型、配置、使用说明已就位）。
+#
+# 说明：
+# - LaMa 模型不入库（.gitignore），流水线从 HuggingFace opencv/inpainting_lama
+#   下载 inpainting_lama_2025jan.onnx 到 models/，与 tools/package_app.py 的
+#   约定一致；模型下载有缓存，不重复拉取。
+# - 打包后跑 --smoke 离屏自检（QT_QPA_PLATFORM=offscreen），冒烟图由流水线
+#   现场生成，不依赖仓库外文件。
+# - 单元测试不在本流水线跑：当前有 2 个既有失败（干净 HEAD 同样失败，见
+#   e2c093b 提交说明），测试关口在本地 ./start.sh test 体系，避免 CI 常红
+#   掩盖真问题。
+
+name: 打包
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: dewatermark-macos
+            windowed: ""
+          - os: windows-latest
+            artifact: dewatermark-windows
+            windowed: "--windowed"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: 缓存 LaMa 模型
+        uses: actions/cache@v4
+        with:
+          path: models/inpainting_lama_2025jan.onnx
+          key: lama-inpainting-2025jan
+
+      - name: 下载 LaMa 模型（缓存未命中时）
+        shell: bash
+        run: |
+          python - <<'PY'
+          from huggingface_hub import hf_hub_download
+          p = hf_hub_download("opencv/inpainting_lama", "inpainting_lama_2025jan.onnx",
+                              local_dir="models")
+          print("model at", p)
+          PY
+
+      - name: PyInstaller 打包
+        run: python tools/package_app.py --clean ${{ matrix.windowed }}
+
+      - name: 生成冒烟测试图
+        shell: bash
+        run: |
+          python - <<'PY'
+          from PIL import Image, ImageDraw
+          img = Image.new("RGB", (800, 600), (245, 243, 238))
+          d = ImageDraw.Draw(img)
+          for y in range(80, 560, 46):          # 仿正文行
+              d.rectangle([60, y, 740, y + 14], fill=(60, 60, 60))
+          for x in range(-200, 900, 260):      # 仿淡水印
+              d.text((x, 300), "WATERMARK", fill=(215, 212, 205))
+          img.save("smoke_input.png")
+          print("smoke_input.png written")
+          PY
+
+      - name: 冒烟自检（离屏，不弹窗）
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          HF_HUB_OFFLINE: "1"
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            ./dist/去水印/去水印.exe --smoke smoke_input.png
+          else
+            ./dist/去水印/去水印 --smoke smoke_input.png
+          fi
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/去水印/
+          compression-level: 6
