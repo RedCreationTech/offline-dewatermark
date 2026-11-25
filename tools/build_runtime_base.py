@@ -1,13 +1,13 @@
 """去水印底座包构建脚本：在 GPU 机器上一次性打出「不变的大件」。
 
 底座包内容（约 7~8GB，打好后长期使用，代码更新不需要重打）：
-    去水印底座/
+    去水印/                                  ← 与主程序包同名文件夹，解压自动合并
     ├─ models/inpainting_lama_2025jan.onnx   LaMa 修复模型
     ├─ models/WeVisOne-VL-2B/                提示词定位大模型权重
     ├─ wevisone_runtime/python/              便携 Python + GPU 版 PyTorch + 依赖
     └─ 底座说明.txt                           内容清单与用法（本脚本生成）
 
-用法（在配有 RTX 显卡的 Windows 打包机上，项目根目录）：
+用法（在跑过本项目含提示词模型的 Windows 机器上，项目根目录）：
     python tools/build_runtime_base.py              # 全流程：组装 + 自检 + 压缩
     python tools/build_runtime_base.py --dry-run    # 只打印计划，不动手
     python tools/build_runtime_base.py --skip-zip   # 只组装目录，不压缩
@@ -113,7 +113,7 @@ def main() -> None:
     lines = freeze(SRC_VENV)
     torch_pins, local_pkgs, pypi = split_requirements(lines)
 
-    bundle = Path(ns.out) / "去水印底座"
+    bundle = Path(ns.out) / "去水印"
     runtime_py = bundle / "wevisone_runtime" / "python"
     print(f"[底座] 计划：运行时复制自 {home}；torch 源 {ns.torch_index}；")
     print(f"[底座] 依赖 {len(pypi)} 个普通包、{len(torch_pins)} 个 torch 家族、"
@@ -156,8 +156,9 @@ def main() -> None:
         f"生成时间：{datetime.datetime.now():%Y-%m-%d %H:%M}（{Path.home().name}@{sys.platform}）\n\n"
         "内容：LaMa 修复模型、WeVisOne-VL-2B 提示词模型、便携 Python 运行时\n"
         "（含 GPU 版 PyTorch，依赖版本与打包机开发环境逐钉一致）。\n\n"
-        "用法：把「主程序包」解压到本目录（去水印.exe 与本说明同级），双击即用。\n"
-        "本底座长期不变；程序更新只需覆盖主程序包，不要删 models/ 与 wevisone_runtime/。\n",
+        "用法：本包与「主程序包」解压到同一位置，两个 zip 里都是「去水印」文件夹，\n"
+        "会自动合并成一个目录，双击其中的 去水印.exe 即可。\n"
+        "本底座长期不变；程序更新只需用新主程序包覆盖，不要删 models/ 与 wevisone_runtime/。\n",
         encoding="utf-8")
 
     print("[底座] 5/5 压缩…")
@@ -166,7 +167,7 @@ def main() -> None:
         return
     stamp = datetime.datetime.now().strftime("%Y%m%d")
     archive = shutil.make_archive(str(Path(ns.out) / f"去水印底座_{stamp}"), "zip",
-                                  root_dir=ns.out, base_dir="去水印底座")
+                                  root_dir=ns.out, base_dir="去水印")
     size_gb = Path(archive).stat().st_size / 1e9
     print(f"[底座] 完成：{archive}（{size_gb:.1f}GB）")
     if size_gb > 1.9:
