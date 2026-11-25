@@ -67,9 +67,10 @@ def build(windowed: bool, clean: bool, distpath: Path, workpath: Path) -> Path:
         "--distpath", str(distpath),
         "--workpath", str(workpath),
         "--specpath", str(workpath),
-        # wm 包内资源：字体（synth 用）与界面 SVG
-        "--add-data", f"wm/fonts{sep}wm/fonts",
-        "--add-data", f"wm/assets{sep}wm/assets",
+        # wm 包内资源：字体（synth 用）与界面 SVG；源路径必须绝对——相对路径
+        # 会被 PyInstaller 按 spec 所在目录解析（Windows CI 实测报找不到）。
+        "--add-data", f"{ROOT / 'wm' / 'fonts'}{sep}wm/fonts",
+        "--add-data", f"{ROOT / 'wm' / 'assets'}{sep}wm/assets",
         # rapidocr 的 OCR 模型与配置随 wheel 安装，需显式收集
         "--collect-data", "rapidocr_onnxruntime",
     ]
