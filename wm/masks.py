@@ -482,6 +482,26 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
                                             ("repeated", "paper_repeat", "document_overlay", "chromatic"))):
         from . import repeated, ocr, paper_repeat
         located = None
+        # 排班（2026-11-24 实测拍板，11-25 修正判别）：有正文的文档页让
+        # paper_repeat 先上场——正文页上重复路的晶格规律推断被文字搅局
+        # （s001 文档底 0.62 vs 老路 0.92）；无正文页（白底/干净页）维持
+        # 重复路优先，哨兵基线路径不变。text_zones/read_lines 均有进程内缓存。
+        # "有正文"的判据是直立文本行（倾斜 ≤2.5° 且行长 ≥3 倍行高）≥2 行：
+        # 斜向水印行（实测 -4°）会被 OCR 读出但不算正文——白底 s010 的 40px
+        # 水印行曾被误当正文让老路抢走路由，召回 99.00→98.39 退化。不用
+        # text_zones 的 tilt≤15°（那是扫描微斜容差，会把斜水印也当正文）。
+        text_zones = ocr.text_zones(img)
+        _upright = 0
+        for _box, _t, _c in (ocr.read_lines(img) or []):
+            _h, _l, _tilt = ocr._geometry(_box)
+            if _tilt <= 2.5 and _l >= 3 * _h:
+                _upright += 1
+        doc_with_text = _upright >= 2
+        if doc_with_text and wanted("paper_repeat"):
+            paper = paper_repeat.estimate(img)
+            if paper is not None:
+                paper.instances = _instances(paper.alpha, thr)
+                return paper
         if wanted("repeated"):
             located = repeated.estimate(img)
             if photo_fallback is not None:
@@ -523,7 +543,7 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
                 located.instances = _instances(located.alpha, thr)
                 return located
         if keepout is None:
-            keepout = ocr.text_zones(img)
+            keepout = text_zones
     if use_ocr and (channels is None or any(c in channels for c in
                     ("dark_text", "repeated", "paper_repeat", "chromatic"))):
         from . import contrast_text
