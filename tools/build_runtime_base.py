@@ -97,6 +97,9 @@ def split_requirements(lines: list[str]) -> tuple[list[str], list[str], list[str
 
 
 def main() -> None:
+    # Windows 控制台默认 cp1252/GBK，打印中文会 UnicodeEncodeError；强制 UTF-8。
+    for _s in (sys.stdout, sys.stderr):
+        _s.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(prog="build_runtime_base", description="组装去水印底座包")
     ap.add_argument("--out", default=str(ROOT / "dist_base"), help="输出目录（默认 dist_base/）")
     ap.add_argument("--torch-index", default=TORCH_INDEX, help="torch GPU 版下载源")

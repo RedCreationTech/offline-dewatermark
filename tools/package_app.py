@@ -111,6 +111,10 @@ def stage_runtime_files(bundle: Path, *, with_models: bool = True) -> None:
 
 
 def main() -> None:
+    # Windows 控制台默认 cp1252/GBK，打印中文路径会 UnicodeEncodeError；
+    # 强制 UTF-8 并容忍替换，保证打包日志在任何机器上都不因打印而崩。
+    for _s in (sys.stdout, sys.stderr):
+        _s.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(prog="package_app", description="PyInstaller 打包 wm.app")
     ap.add_argument("--windowed", action="store_true", help="不显示控制台窗口（Windows 交付用）")
     ap.add_argument("--clean", action="store_true", help="清理 build/ dist/ 后重新打包")

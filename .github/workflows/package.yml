@@ -15,6 +15,9 @@
 
 name: 打包
 
+env:
+  PYTHONUTF8: "1"   # Windows runner 默认 cp1252，打印/读写中文路径会崩，全程 UTF-8
+
 on:
   push:
     branches: [main]
