@@ -26,6 +26,7 @@ import numpy as np
 import onnxruntime as ort
 
 from .contract import RepairName, Thresholds
+from .paths import app_root
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ def _resolve_model_path() -> str:
     if env and Path(env).is_file():
         return env
 
-    local = Path(__file__).resolve().parent.parent / "models" / _HF_FILE
+    local = app_root() / "models" / _HF_FILE
     if local.is_file():
         return str(local)
 

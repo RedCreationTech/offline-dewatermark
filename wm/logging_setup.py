@@ -16,10 +16,12 @@ import logging.handlers
 import os
 from pathlib import Path
 
+from .paths import app_root
+
 LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 DEFAULT_LEVEL = "INFO"
-CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "logging.json"
-LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+CONFIG_PATH = app_root() / "config" / "logging.json"
+LOG_DIR = app_root() / "logs"
 LOG_FILE = LOG_DIR / "wm.log"
 
 _logger = logging.getLogger("wm")
