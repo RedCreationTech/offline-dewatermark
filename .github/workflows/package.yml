@@ -1,8 +1,8 @@
-# 打包流水线：把 wm.app 桌面前端打成独立可执行目录（macOS / Windows）。
+# 打包流水线：把 wm.app 桌面前端打成 Windows 独立可执行目录。
 #
 # 触发：推 main、打 v* 标签、或手动 Actions → 打包 → Run workflow。
-# 产物：Actions 运行页底部的 Artifacts（dewatermark-macos / dewatermark-windows），
-#       解压后整目录拷给目标机器即可运行（模型、配置、使用说明已就位）。
+# 产物：Actions 运行页底部的 Artifacts（dewatermark-windows），解压后整目录
+#       拷给目标机器，双击 去水印.exe 即可运行（模型、配置、使用说明已就位）。
 #
 # 说明：
 # - LaMa 模型不入库（.gitignore），流水线从 HuggingFace opencv/inpainting_lama
@@ -28,9 +28,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            artifact: dewatermark-macos
-            windowed: ""
           - os: windows-latest
             artifact: dewatermark-windows
             windowed: "--windowed"
