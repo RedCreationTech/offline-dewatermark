@@ -1,15 +1,17 @@
-# 打包流水线：只打「主程序包」（代码 + 界面/推理依赖，不含模型）。
+# 打包流水线：打「主程序包」（代码 + 界面/推理依赖 + LaMa 修复模型）。
 #
 # 触发：推 main、打 v* 标签、或手动 Actions → 打包 → Run workflow。
-# 产物：Actions 运行页底部的 Artifacts（dewatermark-windows），是不变的
-#       「去水印底座包」（模型 + 便携 Python 环境，由 tools/build_runtime_base.py
-#       在 GPU 机器上一次性打好，见 docs/底座包打包说明.md）之上的更新包：
-#       收件人首次拿底座+主程序两个 zip 解压到同一目录；以后更新只发本包覆盖。
+# 产物：Actions 运行页底部的 Artifacts（dewatermark-windows），解压后补上
+#       即完整可运行自动识别（OCR 模型随依赖在包内）；只有「提示词定位」
+#       需要再叠加「去水印底座包」（tools/build_runtime_base.py 一次性打好，
+#       见 docs/底座包打包说明.md）。
 #
 # 说明：
-# - LaMa 模型不入库也不进本产物，但冒烟自检需要它：流水线从 HuggingFace
-#   下载到 models/（有缓存），冒烟时通过 WM_LAMA_ONNX 指给程序。
+# - LaMa 模型不入库：流水线从 HuggingFace 下载到 models/（有缓存），
+#   打包脚本将它收进产物 models/ 目录。
 # - 打包后跑 --smoke 离屏自检（QT_QPA_PLATFORM=offscreen），冒烟图现场生成。
+# - 产物保留 7 天（带模型后单包 ~400MB，默认 90 天会顶爆免费配额；
+#   要长期留存请下载后自行归档）。
 # - 单元测试不在本流水线跑：当前有 2 个既有失败（干净 HEAD 同样失败），
 #   测试关口在本地 ./start.sh test 体系，避免 CI 常红掩盖真问题。
 
@@ -66,8 +68,8 @@ jobs:
           print("model at", p)
           PY
 
-      - name: PyInstaller 打包（主程序包，不含模型）
-        run: python tools/package_app.py --clean --no-models ${{ matrix.windowed }}
+      - name: PyInstaller 打包（主程序包，含 LaMa 模型）
+        run: python tools/package_app.py --clean ${{ matrix.windowed }}
 
       - name: 生成冒烟测试图
         shell: bash
@@ -104,3 +106,4 @@ jobs:
           name: ${{ matrix.artifact }}
           path: dist/去水印/
           compression-level: 6
+          retention-days: 7
