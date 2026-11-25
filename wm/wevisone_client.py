@@ -21,11 +21,30 @@ import threading
 import time
 from pathlib import Path
 
+from .paths import app_root
+
 ROOT = Path(__file__).resolve().parents[1]
-SERVER_SCRIPT = ROOT / "tools" / "wevisone_server.py"
-VENV_PYTHON = ROOT / "out" / "third_party" / "WeVisOne-VL" / ".venv" / "Scripts" / "python.exe"
-LOG_FILE = ROOT / "out" / "wevisone_service.log"
-DEFAULT_MODEL = os.environ.get("WM_WEVISONE_MODEL", "models/WeVisOne-VL-2B")
+_APP = app_root()
+
+
+def _first_existing(*candidates: Path) -> Path:
+    for c in candidates:
+        if c.is_file():
+            return c
+    return candidates[0]
+
+
+# 服务脚本：打包版随主程序包放在 exe 旁 tools/ 下；开发仓库在仓库 tools/。
+SERVER_SCRIPT = _first_existing(_APP / "tools" / "wevisone_server.py",
+                                ROOT / "tools" / "wevisone_server.py")
+# 推理环境（两选一，先找到先用）：
+# - 底座包：便携 Python 在 exe 旁 wevisone_runtime/python/（Windows 布局）
+# - 开发机：WeVisOne 仓库自带 venv
+VENV_PYTHON = _first_existing(
+    _APP / "wevisone_runtime" / "python" / "python.exe",
+    ROOT / "out" / "third_party" / "WeVisOne-VL" / ".venv" / "Scripts" / "python.exe")
+LOG_FILE = _APP / "out" / "wevisone_service.log"
+DEFAULT_MODEL = os.environ.get("WM_WEVISONE_MODEL", str(_APP / "models" / "WeVisOne-VL-2B"))
 SEGMENT_TIMEOUT_S = int(os.environ.get("WM_WEVISONE_TIMEOUT_S", "120"))  # 设计 Q11：单页调用超时
 START_TIMEOUT_S = int(os.environ.get("WM_WEVISONE_START_TIMEOUT_S", "300"))  # 冷启动含模型加载
 

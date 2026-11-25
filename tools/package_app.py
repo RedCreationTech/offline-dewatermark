@@ -82,20 +82,31 @@ def build(windowed: bool, clean: bool, distpath: Path, workpath: Path) -> Path:
     return distpath / APP_NAME
 
 
-def stage_runtime_files(bundle: Path) -> None:
-    """把模型、配置和使用说明放到可执行文件旁边（app_root 约定）。"""
-    models_dst = bundle / "models"
-    models_dst.mkdir(parents=True, exist_ok=True)
-    lama = ROOT / "models" / "inpainting_lama_2025jan.onnx"
-    if not lama.is_file():
-        raise SystemExit(f"[package] 缺少模型 {lama}，无法打出可运行的包")
-    shutil.copy2(lama, models_dst / lama.name)
+def stage_runtime_files(bundle: Path, *, with_models: bool = True) -> None:
+    """把模型、配置、推理服务脚本和使用说明放到可执行文件旁边（app_root 约定）。"""
+    if with_models:
+        models_dst = bundle / "models"
+        models_dst.mkdir(parents=True, exist_ok=True)
+        lama = ROOT / "models" / "inpainting_lama_2025jan.onnx"
+        if not lama.is_file():
+            raise SystemExit(f"[package] 缺少模型 {lama}，无法打出可运行的包")
+        shutil.copy2(lama, models_dst / lama.name)
 
     config_dst = bundle / "config"
     config_dst.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "config" / "logging.json", config_dst / "logging.json")
 
-    (bundle / "使用说明.txt").write_text(README_TEXT, encoding="utf-8")
+    # 提示词定位的推理服务脚本：打包版由底座包里的便携 Python 执行它，
+    # 属于代码（随主程序包更新），不属底座。
+    tools_dst = bundle / "tools"
+    tools_dst.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "tools" / "wevisone_server.py", tools_dst / "wevisone_server.py")
+
+    readme = README_TEXT
+    if not with_models:
+        readme += ("\n6. 本包为主程序更新包，不含修复模型；models/ 与 wevisone_runtime/\n"
+                   "   由「去水印底座包」提供，解压到同一目录后使用。\n")
+    (bundle / "使用说明.txt").write_text(readme, encoding="utf-8")
     print(f"[package] 运行文件已就位：{bundle}")
 
 
@@ -105,10 +116,12 @@ def main() -> None:
     ap.add_argument("--clean", action="store_true", help="清理 build/ dist/ 后重新打包")
     ap.add_argument("--distpath", default=str(ROOT / "dist"), help="产物根目录（默认 dist/）")
     ap.add_argument("--workpath", default=str(ROOT / "build" / "pyinstaller"), help="中间文件目录")
+    ap.add_argument("--no-models", action="store_true",
+                    help="不打入 LaMa 模型（主程序更新包模式：模型由底座包提供）")
     ns = ap.parse_args()
 
     bundle = build(ns.windowed, ns.clean, Path(ns.distpath), Path(ns.workpath))
-    stage_runtime_files(bundle)
+    stage_runtime_files(bundle, with_models=not ns.no_models)
     print(f"[package] 完成：{bundle}")
     print("[package] 验证：", f'"{bundle / APP_NAME}" --smoke <图片路径>')
 

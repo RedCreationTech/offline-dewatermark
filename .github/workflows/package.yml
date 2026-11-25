@@ -1,18 +1,17 @@
-# 打包流水线：把 wm.app 桌面前端打成 Windows 独立可执行目录。
+# 打包流水线：只打「主程序包」（代码 + 界面/推理依赖，不含模型）。
 #
 # 触发：推 main、打 v* 标签、或手动 Actions → 打包 → Run workflow。
-# 产物：Actions 运行页底部的 Artifacts（dewatermark-windows），解压后整目录
-#       拷给目标机器，双击 去水印.exe 即可运行（模型、配置、使用说明已就位）。
+# 产物：Actions 运行页底部的 Artifacts（dewatermark-windows），是不变的
+#       「去水印底座包」（模型 + 便携 Python 环境，由 tools/build_runtime_base.py
+#       在 GPU 机器上一次性打好，见 docs/底座包打包说明.md）之上的更新包：
+#       收件人首次拿底座+主程序两个 zip 解压到同一目录；以后更新只发本包覆盖。
 #
 # 说明：
-# - LaMa 模型不入库（.gitignore），流水线从 HuggingFace opencv/inpainting_lama
-#   下载 inpainting_lama_2025jan.onnx 到 models/，与 tools/package_app.py 的
-#   约定一致；模型下载有缓存，不重复拉取。
-# - 打包后跑 --smoke 离屏自检（QT_QPA_PLATFORM=offscreen），冒烟图由流水线
-#   现场生成，不依赖仓库外文件。
-# - 单元测试不在本流水线跑：当前有 2 个既有失败（干净 HEAD 同样失败，见
-#   e2c093b 提交说明），测试关口在本地 ./start.sh test 体系，避免 CI 常红
-#   掩盖真问题。
+# - LaMa 模型不入库也不进本产物，但冒烟自检需要它：流水线从 HuggingFace
+#   下载到 models/（有缓存），冒烟时通过 WM_LAMA_ONNX 指给程序。
+# - 打包后跑 --smoke 离屏自检（QT_QPA_PLATFORM=offscreen），冒烟图现场生成。
+# - 单元测试不在本流水线跑：当前有 2 个既有失败（干净 HEAD 同样失败），
+#   测试关口在本地 ./start.sh test 体系，避免 CI 常红掩盖真问题。
 
 name: 打包
 
@@ -64,8 +63,8 @@ jobs:
           print("model at", p)
           PY
 
-      - name: PyInstaller 打包
-        run: python tools/package_app.py --clean ${{ matrix.windowed }}
+      - name: PyInstaller 打包（主程序包，不含模型）
+        run: python tools/package_app.py --clean --no-models ${{ matrix.windowed }}
 
       - name: 生成冒烟测试图
         shell: bash
@@ -87,6 +86,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
           HF_HUB_OFFLINE: "1"
+          WM_LAMA_ONNX: ${{ github.workspace }}/models/inpainting_lama_2025jan.onnx
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             ./dist/去水印/去水印.exe --smoke smoke_input.png
