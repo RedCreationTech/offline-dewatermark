@@ -68,6 +68,7 @@ models/
 htmlcov/
 build/
 dist/
+dist_base/
 *.egg-info/
 
 # 运行日志（logs/wm.log 及滚动备份）
