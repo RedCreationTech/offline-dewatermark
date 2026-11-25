@@ -86,6 +86,7 @@ jobs:
 
       - name: 冒烟自检（离屏，不弹窗）
         shell: bash
+        timeout-minutes: 8   # windowed exe 启动失败会弹不可见对话框干等，超时杀黔防拖满整个 job
         env:
           QT_QPA_PLATFORM: offscreen
           HF_HUB_OFFLINE: "1"

@@ -57,7 +57,9 @@ def build(windowed: bool, clean: bool, distpath: Path, workpath: Path) -> Path:
 
     sep = ";" if sys.platform == "win32" else ":"
     args = [
-        str(ROOT / "wm" / "app.py"),
+        # 入口必须用包外跳板（绝对导入）：直接打 wm/app.py 会因相对导入
+        # 在启动即崩（ImportError: attempted relative import）
+        str(ROOT / "tools" / "app_entry.py"),
         "--name", APP_NAME,
         "--onedir",
         "--windowed" if windowed else "--console",
