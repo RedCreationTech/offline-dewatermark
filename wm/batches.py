@@ -21,7 +21,11 @@ class Batch:
     uid: str = field(default_factory=lambda: uuid4().hex)
     params: dict[str, int] = field(default_factory=dict)
     use_ocr: bool = True
-    style: str | None = None
+    style: str | None = None  # 自动识别模式的严格路由锁（防护边界，见 masks.py）
+    # 提示词模式下的样式提示：只把模型框内检测优先路由到该样式通道
+    # （locate_strokes 内未命中按框回落按笔画逻辑），不影响自动识别。
+    # 两字段按模式分别记忆，防止提示词下选的样式污染自动运行（V1.53）。
+    style_prompt: str | None = None
     recall_priority: bool = True
     # 找水印方式：auto＝自动识别（默认）；prompt＝提示词定位（WeVisOne）。
     detection_mode: str = "auto"
@@ -109,7 +113,7 @@ class BatchWorker(QThread):
             layer, info = prompt_detect.locate_strokes(
                 page.image, batch.prompt_query, service, thr,
                 close_px=close_px, use_ocr=use_ocr,
-                treatment=batch.prompt_treatment, style=batch.style)
+                treatment=batch.prompt_treatment, style=batch.style_prompt)
         except ServiceDied:
             # 常驻服务崩溃：重启一次再试；仍失败则按运行失败上抛。
             service.stop()
@@ -118,7 +122,7 @@ class BatchWorker(QThread):
             layer, info = prompt_detect.locate_strokes(
                 page.image, batch.prompt_query, service, thr,
                 close_px=close_px, use_ocr=use_ocr,
-                treatment=batch.prompt_treatment, style=batch.style)
+                treatment=batch.prompt_treatment, style=batch.style_prompt)
         if (info.get("treatment") == "box" and info.get("text_overlap_ratio", 0) > 0.03):
             self.update.emit(dict(
                 kind="stage", batch=batch.uid, index=index,

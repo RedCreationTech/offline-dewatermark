@@ -159,6 +159,53 @@ class OptionalPriorTests(unittest.TestCase):
             worker.run()
         self.assertEqual(worker.done,2)
 
+    def test_prompt_style_hint_never_leaks_into_auto_run(self):
+        # V1.53：提示词模式下选的样式（style_prompt）只作提示词路径的路由
+        # 提示；自动识别路径仍用 batch.style（默认 None=全量级联）。防止
+        # 提示词下选的样式残留在批次上，自动运行整批空选区被拦截
+        # （2026-11-26 04_点阵 22:16 实测回归）。
+        batch = Batch('a', [page(0)])
+        batch.detection_mode = 'prompt'
+        batch.style_prompt = 'dot_grid'
+        batch.prompt_query = '间隔的点阵'
+        captured = {}
+
+        def fake_locate(image, query, service, thr, **kw):
+            captured['prompt_style'] = kw.get('style')
+            return MaskLayer(np.zeros(image.shape[:2], np.float32)), {"boxes_with_support": 0}
+
+        class _Svc:
+            running = True
+            last_model = 'stub'
+
+            def segment(self, image_rgb, query, **kw):
+                return []
+
+        with patch('wm.prompt_detect.locate_strokes', side_effect=fake_locate), \
+             patch('wm.batches.pipeline._process_one'), \
+             patch('wm.recall.complete_prompt_strokes', side_effect=lambda img, layer, t: layer):
+            BatchWorker([(batch, [0], Thresholds(), 11, True)], service=_Svc()).run()
+        self.assertEqual(captured.get('prompt_style'), 'dot_grid')
+
+        auto_batch = Batch('b', [page(0)])
+        auto_batch.style_prompt = 'dot_grid'  # 只设提示词样式；auto 必须不受影响
+        seen = {}
+
+        def fake_single(img, thr=None, close_px=11, keepout=None, use_ocr=True, style=None):
+            seen['auto_style'] = style
+            return MaskLayer(np.zeros(img.shape[:2], np.float32))
+
+        def fake_proc(page, mask, thr, **kw):
+            empty = MaskLayer(np.zeros(page.image.shape[:2], np.float32))
+            return SimpleNamespace(source=page, mask=empty, verdict=SimpleNamespace(
+                repairs=[], elapsed_ms=1, stage_ms={}, failures=[],
+                passed=True, review_needed=True), processing={})
+
+        with patch('wm.batches.masks.estimate_single_page', side_effect=fake_single), \
+             patch('wm.batches.pipeline._process_one', side_effect=fake_proc):
+            BatchWorker([(auto_batch, [0], Thresholds(), 11, True)]).run()
+        self.assertIsNone(seen.get('auto_style'))
+
 
 class FailureLoggingTests(unittest.TestCase):
     def test_page_failure_logs_traceback_and_reports_error(self):

@@ -386,7 +386,10 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
 
     ``style`` optionally locks the routing to one watermark style (see
     wm.styles.STYLE_CHANNELS); unmatched channels are then skipped instead of
-    falling through to the generic detectors.
+    falling through to the generic detectors. The lock is a safety boundary
+    (tests enforce that a dot-grid lock never enters text-cleanup paths), so
+    it must not silently degrade to the full cascade — the hint-with-fallback
+    variant lives only in the prompt-located stroke path (wm/prompt_detect).
     """
     from . import periodic, paper_grid
     from .styles import STYLE_CHANNELS

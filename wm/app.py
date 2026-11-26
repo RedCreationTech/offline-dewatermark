@@ -577,8 +577,9 @@ class MainWindow(QMainWindow):
         self.style_box.setEditable(True)
         self.style_box.addItems(list(STYLE_LABELS.values()))
         self.style_box.setToolTip("自动识别会依次检查水印类型；也可选择样式或输入中文描述。"
-                                  "提示词定位模式下，选定样式（如点阵水印）会把模型框内的"
-                                  "检测路由到对应专用通道；保持「自动识别」则按原笔画逻辑。")
+                                  "自动识别下选定样式＝严格只走该样式通道（防护边界，选错"
+                                  "可能整批无结果）；提示词定位下选定样式＝框内优先走该"
+                                  "样式通道、未命中回落按笔画。两种模式分别记忆，互不影响。")
         find_grid.addWidget(QLabel("水印样式"), 4, 0)
         find_grid.addWidget(self.style_box, 4, 1, 1, 2)
         row = 5
@@ -638,8 +639,25 @@ class MainWindow(QMainWindow):
         self.style_box.setVisible(True)
         grid.itemAtPosition(4, 0).widget().setVisible(True)
 
+    def _reshow_style_for_mode(self) -> None:
+        """切换找水印方式后，把样式框刷新为该模式下记忆的样式（两模式分别记忆）。
+
+        恢复 loading 标记的原值而非置 False：本方法可能在 select_batch
+        的装载流程中被 mode 切换间接调用，不能提前解除装载态。"""
+        if self.batch is None:
+            return
+        previous = self._loading_params
+        self._loading_params = True
+        try:
+            shown = (self.batch.style_prompt if self.mode_box.currentData() == "prompt"
+                     else self.batch.style)
+            self.style_box.setCurrentText(STYLE_LABELS.get(shown, "自动识别"))
+        finally:
+            self._loading_params = previous
+
     def _mode_changed(self) -> None:
         self._update_mode_controls()
+        self._reshow_style_for_mode()
         self.save_params()
         if self.mode_box.currentData() != "prompt":
             self._stop_wevisone("已切回自动识别，提示词模型服务已停止、显存已释放。")
@@ -734,14 +752,20 @@ class MainWindow(QMainWindow):
         service_mode = self.current_service_mode()
         prompt_treatment = self.current_treatment()
         # 影响检测结果的因素变化都要丢掉可复用的共享掩码；服务方式只影响资源占用，不算。
+        # 样式按模式分别记忆：提示词模式写 style_prompt，自动识别写 style（严格锁）。
+        if detection_mode == "prompt":
+            style_changed = self.batch.style_prompt != style
+            self.batch.style_prompt = style
+        else:
+            style_changed = self.batch.style != style
+            self.batch.style = style
         if (any(self.batch.params.get(k) != params[k] for k in ("mask_alpha_min", "close_px"))
-                or self.batch.style != style
+                or style_changed
                 or self.batch.detection_mode != detection_mode
                 or self.batch.prompt_query != prompt_query
                 or self.batch.prompt_treatment != prompt_treatment):
             self.batch.invalidate()
         self.batch.params = params
-        self.batch.style = style
         self.batch.detection_mode = detection_mode
         self.batch.prompt_query = prompt_query
         self.batch.service_mode = service_mode
@@ -757,7 +781,13 @@ class MainWindow(QMainWindow):
         for attr, slider in self._sliders.items():
             slider.setValue(self.batch.params.get(attr, _knob_default(attr))
                             if self.batch else _knob_default(attr))
-        self.style_box.setCurrentText(STYLE_LABELS.get(self.batch.style if self.batch else None, "自动识别"))
+        # 样式按当前批次模式显示：提示词批次显示 style_prompt，自动批次显示 style。
+        if self.batch:
+            shown_style = (self.batch.style_prompt if self.batch.detection_mode == "prompt"
+                           else self.batch.style)
+        else:
+            shown_style = None
+        self.style_box.setCurrentText(STYLE_LABELS.get(shown_style, "自动识别"))
         self.mode_box.setCurrentIndex(max(0, self.mode_box.findData(
             self.batch.detection_mode if self.batch else "auto")))
         self.service_box.setCurrentIndex(max(0, self.service_box.findData(
