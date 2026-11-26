@@ -124,6 +124,8 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
+    ap.add_argument("--out-dir", default=None,
+                    help="指定报告子目录（默认在 test_root 下新建时间戳目录）")
     args = ap.parse_args()
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
 
@@ -243,8 +245,12 @@ def main() -> None:
     problems_html = "".join(f"<li>{mark_terms(esc(x))}</li>" for x in problems)
     limits_html = "".join(f"<li>{esc(x)}</li>" for x in limits)
 
-    out_dir = Path(cfg.get("test_root", r"D:\gaocunbin\pk-test\test")) / f"{now:%Y%m%d_%H%M%S}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if args.out_dir:
+        out_dir = Path(args.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = Path(cfg.get("test_root", r"D:\gaocunbin\pk-test\test")) / f"{now:%Y%m%d_%H%M%S}"
+        out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(exp / "manifest.json", out_dir / "manifest.json")
     shutil.copy2(exp / "queue.json", out_dir / "queue.json")
     shutil.copy2(args.config, out_dir / "run_config.json")

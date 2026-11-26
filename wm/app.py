@@ -30,6 +30,7 @@ from . import logging_setup
 from .batches import Batch, BatchWorker
 from .batch_timing import format_duration
 from .contract import PageImage, PageResult, Thresholds
+from .paths import app_root
 from .viewer import ImageViewer
 from .export_review import overlay_mask
 from .assist_worker import AssistWorker
@@ -951,20 +952,71 @@ class MainWindow(QMainWindow):
         root = Path(chosen) / ("batches_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
         try:
             for batch, indices in selections:
-                safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in batch.name)[:80]
-                target = root / f"{safe}_{batch.uid[:8]}"
-                results = [batch.results[i] for i in indices if i in batch.results]
-                pipeline.write_results(results, target)
-                (target / "queue.json").write_text(json.dumps([
-                    dict(page=batch.pages[i].key, state=batch.states.get(i, "未处理"),
-                         error=batch.errors.get(i)) for i in indices], ensure_ascii=False, indent=2), "utf-8")
-                batch.dirty.difference_update(i for i in indices if i in batch.results)
+                self._export_batch(batch, indices, root)
         except Exception:
             logging.getLogger(__name__).exception("文件操作失败")
             QMessageBox.warning(self, "导出失败", "无法保存结果，请检查目录的写入权限和剩余磁盘空间。")
             return
         self.status.setText(f"已导出结果、原图与水印选区；各批次 review.html 可逐图复核 → {root}")
         logging.getLogger(__name__).info("导出结果：范围=%s，目录=%s", scope, root)
+
+    def _export_batch(self, batch, indices, root: Path) -> Path:
+        """把批次内指定页的结果导出到 root 下（每批次一个子目录），返回目标目录。"""
+        safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in batch.name)[:80]
+        target = root / f"{safe}_{batch.uid[:8]}"
+        results = [batch.results[i] for i in indices if i in batch.results]
+        pipeline.write_results(results, target)
+        (target / "queue.json").write_text(json.dumps([
+            dict(page=batch.pages[i].key, state=batch.states.get(i, "未处理"),
+                 error=batch.errors.get(i)) for i in indices], ensure_ascii=False, indent=2), "utf-8")
+        batch.dirty.difference_update(i for i in indices if i in batch.results)
+        return target
+
+    def _confirm_export_and_clear(self, batches) -> bool:
+        """整批重跑前：提示把已有结果导出到 out，然后清空结果从头开始。
+
+        返回 False 表示用户取消（保留现有结果，不启动运行）。
+        """
+        targets = [b for b in batches if b is not None and b.results]
+        if not targets:
+            return True
+        total = sum(len(b.results) for b in targets)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("重新处理批次")
+        box.setText(f"该批次已有 {total} 张处理结果，重新处理会先清空这些结果、全部从头开始。")
+        box.setInformativeText("要先把已有结果导出到 out 目录再清空吗？")
+        export_btn = box.addButton("导出并清空", QMessageBox.AcceptRole)
+        box.addButton("直接清空", QMessageBox.DestructiveRole)
+        cancel_btn = box.addButton(QMessageBox.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_btn or clicked is None:
+            return False
+        if clicked is export_btn:
+            root = app_root() / "out" / ("batches_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+                for batch in targets:
+                    self._export_batch(batch, sorted(batch.results), root)
+            except Exception:
+                logging.getLogger(__name__).exception("重跑前自动导出既有结果失败")
+                QMessageBox.warning(self, "导出失败",
+                                    "无法保存已有结果，重跑已取消；请检查磁盘空间或先手动导出。")
+                return False
+            self.status.setText(f"已把 {total} 张既有结果导出到 {root}")
+            logging.getLogger(__name__).info("重跑前自动导出既有结果：%d 张 → %s", total, root)
+        for batch in targets:
+            batch.results.clear()
+            batch.states.clear()
+            batch.errors.clear()
+            batch.dirty.clear()
+            batch.timing = None
+            batch.invalidate()
+        self.refresh_batches()
+        self.select_batch(self.batch_list.currentRow())
+        logging.getLogger(__name__).info("重跑前清空既有结果：%d 张", total)
+        return True
 
     def set_busy(self, busy: bool) -> None:
         busy = busy or self._assist_busy
@@ -1257,6 +1309,9 @@ class MainWindow(QMainWindow):
             job = (batch, indices, thr, vals["close_px"], True, batch.style)
             jobs.append(job + (True,) if self.automatic_selection else job)
         if not jobs:
+            return
+        if only_page is None and not self._confirm_export_and_clear([job[0] for job in jobs]):
+            self.status.setText("已取消处理，保留现有结果。")
             return
         uses_prompt = any(job[0].detection_mode == "prompt" for job in jobs)
         self.worker = BatchWorker(jobs, self, record_batch_timing=only_page is None,
