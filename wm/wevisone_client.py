@@ -136,7 +136,10 @@ class Service:
                 self._proc = subprocess.Popen(
                     command,
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
-                    cwd=str(ROOT), env=env)
+                    cwd=str(ROOT), env=env,
+                    # 打包版（windowed）自身无控制台，Windows 会给控制台子进程
+                    # 新弹一个黑色窗口；禁止分配，管道协议不受影响
+                    creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
             except OSError as exc:
                 log.close()
                 raise ServiceError(f"无法启动提示词模型服务: {exc}") from exc
