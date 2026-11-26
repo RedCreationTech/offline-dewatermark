@@ -53,6 +53,42 @@ def synth_page(style='tiled_text', seed=7):
 
 
 class PromptDetectTests(unittest.TestCase):
+    def test_style_hint_routes_inbox_detection_to_dot_grid_channel(self):
+        # 用户显式样式提示：模型框内改走点阵专用通道（paper_grid），
+        # 不再按文字笔画生长（2026-11-26 04_点阵提示词批次 0/9 的根因）。
+        rng = random.Random(11)
+        clean = synth.render_clean_page(rng, 72, 0)
+        alpha, color, strength = synth.make_watermark(clean.shape, 'dot_grid', 72, 0, rng)
+        image = synth.apply_watermark(clean, alpha, color, strength)
+        h, w = image.shape[:2]
+        service = FakeService([(0, 0, w, h)])
+        layer, info = prompt_detect.locate_strokes(image, '点阵', service, Thresholds(),
+                                                   style='dot_grid')
+        self.assertEqual(info.get('style_routed_boxes'), 1)
+        self.assertEqual(info.get('boxes_with_support'), 1)
+        self.assertGreater(layer.coverage(), 0.001)
+        self.assertEqual(layer.instances[0].style_signature, 'prompt:dot_grid')
+        # 选区应当主要来自点阵通道，而不是笔画生长
+        self.assertGreater(float((layer.alpha > 0).mean()), 0.001)
+
+    def test_style_hint_falls_back_to_strokes_when_channel_declines(self):
+        # 通道未命中（无点阵）时回落到默认按笔画逻辑，不影响旧行为
+        image = np.full((200, 260, 3), 235, np.uint8)
+        service = FakeService([(4, 4, 240, 190)])
+        layer, info = prompt_detect.locate_strokes(image, '点阵', service, Thresholds(),
+                                                   style='dot_grid')
+        self.assertEqual(info.get('style_routed_boxes'), 0)
+
+    def test_no_style_hint_keeps_strokes_behaviour(self):
+        rng = random.Random(11)
+        clean = synth.render_clean_page(rng, 72, 0)
+        alpha, color, strength = synth.make_watermark(clean.shape, 'dot_grid', 72, 0, rng)
+        image = synth.apply_watermark(clean, alpha, color, strength)
+        h, w = image.shape[:2]
+        service = FakeService([(0, 0, w, h)])
+        _, info = prompt_detect.locate_strokes(image, '点阵', service, Thresholds())
+        self.assertNotIn(info.get('style_hint'), ('dot_grid',))
+
     def test_boxes_are_search_ranges_and_hallucination_is_rejected(self):
         # 均匀图上的幻觉框：没有任何像素证据，不得产生选区
         image = np.full((180, 240, 3), 230, np.uint8)
@@ -335,7 +371,8 @@ class PromptPanelTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.win.service_box.isVisible())
         self.assertTrue(self.win.prompt_edit.isVisible())
-        self.assertFalse(self.win.style_box.isVisible())
+        # 提示词模式下样式下拉保留可见：作为框内检测的路由提示（V1.52）
+        self.assertTrue(self.win.style_box.isVisible())
 
     def test_mode_and_prompt_persist_per_batch(self):
         self.win.prompt_edit.setText('验证素材 3409')

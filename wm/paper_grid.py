@@ -42,7 +42,10 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     if not np.isfinite(correlation) or correlation < .9:
         return None
     rows, cols = crop.shape[0]//period, crop.shape[1]//period
-    values = np.where(crop > .6*paper, paper-crop, np.nan)
+    # 以重建纸面（ CLOSE 形态学结果）判定相位格是否落在纸面观测上：
+    # 深色点像素自身不亮，但其 paper 由邻域纸面重建，仍可作为相位观测；
+    # 用原始 crop 亮度判会把深色点页的所有点相位格全部判成不可观测。
+    values = np.where(paper > 150, paper-crop, np.nan)
     blocks = values[:rows*period, :cols*period].reshape(rows, period, cols, period)
     blocks = blocks.transpose(0, 2, 1, 3).reshape(-1, period, period)
     # Sparse body letters cannot define a phase; each phase needs bright-paper
@@ -71,7 +74,8 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     if white-ink < 70:
         return None
     transmission = float((covered_white-covered_ink)/(white-ink))
-    if not .15 < transmission < .85:
+    dark_core = transmission < .15
+    if not -.1 < transmission < .85:
         return None
     white_rgb = np.percentile(img[~footprint & neutral], 85, axis=0)
     covered_rgb = np.percentile(img[core & neutral], 85, axis=0)
@@ -79,6 +83,17 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     if np.any(offset < 0) or np.any(offset > 255*(1-transmission)):
         return None
     phase_alpha = np.clip(profile/peak, 0, 1)*support
+    if dark_core:
+        # 深色（近不透明）点核：纸面在点下不可反解，veil 模型仅记录点色，
+        # 修复走 periodic_paper_dark_overlay 的邻域插值（见 lama.py）。
+        return MaskLayer(alpha=phase_alpha[yy % period, xx % period].astype(np.float32),
+                         source=MaskSource.PRIOR, confidence=.9,
+                         veil_strength=np.zeros(3, np.float32),
+                         veil_offset=offset.astype(np.float32),
+                         paper=np.broadcast_to(white_rgb.astype(np.float32), img.shape).copy(),
+                         footprint=footprint, lattice=(period, period),
+                         repair_mode='periodic_paper_dark_overlay',
+                         method='single_periodic_document')
     return MaskLayer(alpha=phase_alpha[yy % period, xx % period].astype(np.float32),
                      source=MaskSource.PRIOR, confidence=.9,
                      veil_strength=np.full(3, transmission, np.float32),

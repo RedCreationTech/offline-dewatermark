@@ -70,6 +70,10 @@ def _process_one(page: PageImage, mask: MaskLayer, thr: Thresholds,
     block = _gate_block_reason(mask, thr)
     if block is None:
         output, used = repair.repair(page.image, mask, thr)
+        if output.shape == page.image.shape and np.array_equal(output, page.image):
+            # 选区非空但修复没有改动任何像素（覆盖度拟合近零）：
+            # 不假装处理过，如实按未处理转人工。
+            block = "repair_no_effect"
     else:
         # The gate says this page must not be touched: deliver the input
         # byte-identical and flag it for manual review instead of repairing
@@ -89,8 +93,9 @@ def _process_one(page: PageImage, mask: MaskLayer, thr: Thresholds,
         report.failures.append(verdict_mod.FailureCode.NEEDS_MANUAL_MASK)
     report.conditions["gate_blocked"] = block is not None
     if block is not None:
+        label = "证据闸门拦截" if block != "repair_no_effect" else "修复未产生任何改动"
         logging.getLogger(__name__).info(
-            "证据闸门拦截 %s：%s（输出保持原图，转人工）", page.key, block)
+            "%s %s：%s（输出保持原图，转人工）", label, page.key, block)
     report.page_key = page.key
     return PageResult(
         source=page,

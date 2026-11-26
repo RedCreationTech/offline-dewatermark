@@ -423,6 +423,16 @@ def repair_with_lama(img: np.ndarray, mask, thr) -> tuple[np.ndarray, list[Repai
         out[~mask.footprint] = img[~mask.footprint]
         return out, [RepairName.ALPHA_UNMIX]
 
+    if mask.repair_mode == 'periodic_paper_dark_overlay':
+        # 深色（近不透明）点核：纸面在点下不可反解，代数逆会放大拟合噪声。
+        # 点只有几像素，直接从邻域插值；选区外逐像素保持原图。
+        out = img.copy()
+        fill = mask.footprint
+        if fill.any():
+            fixed = cv2.inpaint(img, fill.astype(np.uint8)*255, 3, cv2.INPAINT_TELEA)
+            out[fill] = fixed[fill]
+        return out, [RepairName.INPAINT]
+
     if mask.repair_mode == 'periodic_paper_overlay':
         out = _alpha_unmix(img, mask)
         # Residual JPEG colour/antialiasing on otherwise blank paper is not

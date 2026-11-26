@@ -130,6 +130,24 @@ class GateBehaviourTests(unittest.TestCase):
         self.assertGreater(float(np.any(result.output.image != page.image, axis=2).mean()), 0)
         self.assertFalse(result.verdict.conditions["gate_blocked"])
 
+    def test_repair_without_any_effect_is_flagged_not_faked(self):
+        # 覆盖度近零的选区：修复不改任何像素时，按未处理转人工，
+        # 不假装处理过（2026-11-26 photo_021 红点批次暴露的口径漏洞）。
+        page = _page()
+        alpha = np.zeros(page.image.shape[:2], np.float32)
+        alpha[10:30, 10:60] = 0.09  # 刚过可选阈值，但 veil 模型是恒等反解
+        mask = MaskLayer(alpha=alpha, confidence=0.9,
+                         veil_strength=np.ones(3, np.float32),
+                         veil_offset=np.zeros(3, np.float32),
+                         paper=np.full(page.image.shape, 245, np.float32),
+                         footprint=alpha > 0, repair_mode="texture_overlay")
+        result = _process_one(page, mask, Thresholds())
+        np.testing.assert_array_equal(result.output.image, page.image)
+        from wm.contract import FailureCode
+        self.assertIn(FailureCode.NEEDS_MANUAL_MASK, result.verdict.failures)
+        self.assertTrue(result.verdict.conditions["gate_blocked"])
+        self.assertEqual(result.processing["gate_block_reason"], "repair_no_effect")
+
 
 if __name__ == "__main__":
     unittest.main()

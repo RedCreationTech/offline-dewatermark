@@ -135,7 +135,8 @@ def _clamp_box(box, width: int, height: int) -> tuple[int, int, int, int] | None
 def locate_strokes(image: np.ndarray, query: str, service,
                      thr: Thresholds, *, close_px: int = 11,
                      use_ocr: bool = True,
-                     treatment: str = "strokes") -> tuple[MaskLayer, dict]:
+                     treatment: str = "strokes",
+                     style: str | None = None) -> tuple[MaskLayer, dict]:
     """Run prompt detection and return (mask_layer, info).
 
     service 只需实现 segment(image_rgb, query) -> [xyxy...]，测试可传假实现。
@@ -144,6 +145,8 @@ def locate_strokes(image: np.ndarray, query: str, service,
     淡笔画由强核连通生长加入，证据不足的不加）。
     treatment="box"（整框重绘）把模型框直接作为重绘许可选区，适用于框内
     基本是空白底的水印；框压正文时正文会被一并重绘，调用方应先提示用户。
+    style 为用户显式选择的样式提示（如 dot_grid）：模型框内检测改走该样式
+    的专用通道（点阵/平铺文字等），未命中时回落到默认按笔画逻辑。
     """
     if not query or not query.strip():
         raise ValueError("提示词为空，请输入要去除的水印文字描述。")
@@ -169,6 +172,7 @@ def locate_strokes(image: np.ndarray, query: str, service,
         "detector": METHOD,
         "query": query.strip(),
         "treatment": treatment,
+        "style_hint": style,
         "model_boxes": [list(b) for b, _ in raw_instances],
         "boxes_with_support": 0,
         "text_overlap_ratio": 0.0,
@@ -184,6 +188,7 @@ def locate_strokes(image: np.ndarray, query: str, service,
     instances: list[WatermarkInstance] = []
     confidences: list[float] = []
     supported_boxes = 0
+    routed_boxes = 0
     for index, ((x0, y0, x1, y1), support) in enumerate(zip(boxes, supports)):
         left, top = max(0, x0 - BOX_PAD), max(0, y0 - BOX_PAD)
         right, bottom = min(width, x1 + BOX_PAD), min(height, y1 + BOX_PAD)
@@ -203,6 +208,31 @@ def locate_strokes(image: np.ndarray, query: str, service,
         if support is not None:
             support_crop = support[top:bottom, left:right]
             grow_domain &= support_crop  # matte 搜索范围约束：背景不参与
+        if style is not None:
+            # 用户显式样式提示：框内改走该样式专用通道（点阵/平铺文字等）。
+            # 通道未命中（返回空层）时回落到下方默认按笔画逻辑。
+            styled = masks.estimate_single_page(crop, settings, close_px=close_px,
+                                                use_ocr=use_ocr, style=style)
+            styled_sel = (styled.binary(settings.mask_alpha_min) > 0) & grow_domain
+            if styled_sel.any():
+                routed_boxes += 1
+                supported_boxes += 1
+                confidences.append(float(styled.confidence))
+                stamp = np.zeros((height, width), np.float32)
+                stamp[top:bottom, left:right] = np.where(
+                    styled_sel, np.maximum(styled.alpha, 0.09), 0.)
+                alpha = np.maximum(alpha, stamp)
+                if styled.paper is not None:
+                    fill = float(np.median(styled.paper))
+                    if paper is None:
+                        paper = np.full((height, width) + styled.paper.shape[2:], fill, np.float32)
+                    paper[top:bottom, left:right] = styled.paper
+                keepout[top:bottom, left:right] |= protected
+                instances.append(WatermarkInstance(
+                    instance_id=index + 1, bbox=(x0, y0, x1, y1), pixel_count=int(styled_sel.sum()),
+                    mean_alpha=float(np.maximum(styled.alpha, 0.09)[styled_sel].mean()),
+                    style_signature=f"prompt:{style}", keep=True))
+                continue
         seed = (local.binary(settings.mask_alpha_min) > 0) & grow_domain
         box_h = max(12., min(x1 - x0, y1 - y0) / 3.)
         if not seed.any():
@@ -247,6 +277,7 @@ def locate_strokes(image: np.ndarray, query: str, service,
         text_keepout=keepout if keepout.any() else None)
     info.update({
         "boxes_with_support": supported_boxes,
+        "style_routed_boxes": routed_boxes,
         "selected_pixels": int(selected.sum()),
         "service_ms": round((perf_counter() - started) * 1000),
         "service_model": getattr(service, "last_model", None),

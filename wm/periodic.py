@@ -2,6 +2,10 @@
 
 The lattice, its coverage and its colour are fitted from the input. No sample
 names, reference masks, clean images or fixed dot coordinates are used.
+
+Two signal modes share the same phase-regression machinery: luminance
+(dark-on-light dots, slope < 0) and chroma (coloured dots whose luminance
+deviation is weak but hue deviation is strong, slope > 0 on a chroma image).
 """
 from __future__ import annotations
 
@@ -39,20 +43,34 @@ def _regress(background, observed, period, iterations=0, indices=None):
     return slope.reshape(period, period), offset.reshape(period, period)
 
 
-def estimate(img: np.ndarray) -> MaskLayer | None:
+def _luminance(img: np.ndarray) -> np.ndarray:
+    return img.astype(np.float32).mean(2)
+
+
+def _chroma(img: np.ndarray) -> np.ndarray:
+    f = img.astype(np.float32)
+    return f.max(2) - f.min(2)
+
+
+def _estimate_signal(img: np.ndarray, signal_fn, *, dark: bool,
+                     min_background_std: float) -> MaskLayer | None:
+    """Fit the lattice on one signal image. dark=True keys on darker-than-
+    background dots (luminance); dark=False on stronger-than-background
+    deviations (coloured dots on a chroma image)."""
     h, w = img.shape[:2]
     if min(h, w) < 90:
         return None
     # Cropping preserves an unknown lattice pitch; resizing would change it.
-    crop = img[:640, :640].astype(np.float32).mean(2)
+    crop = signal_fn(img)[:640, :640]
     background = cv2.GaussianBlur(crop, (0, 0), 3)
-    if float(background.std()) < 18:
+    if float(background.std()) < min_background_std:
         return None
     candidates = []
     indices = np.indices(crop.shape)
     for period in range(7, min(65, min(crop.shape)//5)):
         slope, _ = _regress(background, crop-background, period, indices=indices)
-        candidates.append((-float(np.percentile(slope, 1)), period))
+        score = -float(np.percentile(slope, 1)) if dark else float(np.percentile(slope, 99))
+        candidates.append((score, period))
     if not candidates:
         return None
     best = max(score for score, _ in candidates)
@@ -61,15 +79,19 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     # Multiples of a real period have the same response. Prefer its fundamental.
     period = min(p for score, p in candidates if score >= .9*best)
     slope, _ = _regress(background, crop-background, period, 3, indices=indices)
-    support = slope < -.18
+    support = (slope < -.18) if dark else (slope > .18)
     if not .005 < support.mean() < .15:
         return None
     # The same attenuation pattern must recur in separate parts of the image.
     half = (crop.shape[0]//2//period)*period
     first, _ = _regress(background[:half], crop[:half]-background[:half], period)
     second, _ = _regress(background[half:], crop[half:]-background[half:], period)
-    if (np.median(first[support]) > -.15 or np.median(second[support]) > -.15
-            or np.corrcoef(first.ravel(), second.ravel())[0, 1] < .85):
+    med_first, med_second = float(np.median(first[support])), float(np.median(second[support]))
+    if dark:
+        weak = med_first > -.15 or med_second > -.15
+    else:
+        weak = med_first < .15 or med_second < .15
+    if weak or np.corrcoef(first.ravel(), second.ravel())[0, 1] < .85:
         return None
     # A dot is compact, not an entire horizontal/vertical image structure.
     tiled = np.tile(support.astype(np.uint8), (3, 3))
@@ -82,8 +104,7 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
     # The interpolated background is used only to fit the overlay. The restored
     # luminance comes from the original pixels through its inverse, not a blur.
     predicted = cv2.inpaint(img, footprint.astype(np.uint8)*255, 3, cv2.INPAINT_TELEA)
-    trans, _ = _regress(predicted.astype(np.float32).mean(2),
-                       img.astype(np.float32).mean(2), period, 5)
+    trans, _ = _regress(signal_fn(predicted), signal_fn(img), period, 5)
     phase_alpha = np.clip(1-trans, 0, .85)*support
     if not .15 < np.median(phase_alpha[support]) < .8:
         return None
@@ -103,3 +124,14 @@ def estimate(img: np.ndarray) -> MaskLayer | None:
                      paper=np.full(img.shape, 255, np.float32),
                      footprint=footprint, lattice=(period, period),
                      repair_mode="periodic_overlay", method="single_periodic_overlay")
+
+
+def estimate(img: np.ndarray) -> MaskLayer | None:
+    """Luminance lattice first; chroma retry for coloured dots whose luminance
+    deviation is too weak or ambiguous (e.g. red dots on a grey building)."""
+    layer = _estimate_signal(img, _luminance, dark=True, min_background_std=18)
+    if layer is not None:
+        return layer
+    if float(_chroma(img)[:640, :640].std()) < 8:
+        return None
+    return _estimate_signal(img, _chroma, dark=False, min_background_std=6)

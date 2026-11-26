@@ -65,6 +65,44 @@ class PaperGridTests(unittest.TestCase):
         rules[:, ::18] = 0
         self.assertIsNone(paper_grid.estimate(rules))
 
+    @staticmethod
+    def dark_fixture(period):
+        """深色（近不透明）圆点点阵：transmission≈0，旧版被透光率闸拒绝。"""
+        h, w = 500, 550
+        clean = np.full((h, w, 3), 245, np.uint8)
+        for y in range(45, 480, 27):
+            cv2.putText(clean, 'Body text 2037', (20, y), cv2.FONT_HERSHEY_SIMPLEX,
+                        .7, (10, 10, 10), 2)
+        yy, xx = np.indices((h, w))
+        dx = (xx-5+period/2) % period-period/2
+        dy = (yy-8+period/2) % period-period/2
+        dot = np.clip(2.4-np.sqrt(dx*dx+dy*dy), 0, 1)
+        image = clean.copy()
+        image[dot > .3] = (58, 58, 66)
+        return clean, image, dot
+
+    def test_dark_opaque_dot_grid_is_recovered_by_neighbourhood_inpaint(self):
+        from wm.contract import RepairName
+        for pitch in (14, 22):
+            with self.subTest(pitch=pitch):
+                clean, source, dot = self.dark_fixture(pitch)
+                mask = paper_grid.estimate(source)
+                self.assertIsNotNone(mask)
+                self.assertEqual(mask.lattice, (pitch, pitch))
+                self.assertEqual(mask.repair_mode, 'periodic_paper_dark_overlay')
+                with patch('wm.lama._load_session',
+                           side_effect=AssertionError('dark dots use no generative model')):
+                    output, used = repair.repair(source, mask, Thresholds())
+                self.assertEqual(used, [RepairName.INPAINT])
+                region = (dot > .3) & (clean.mean(2) > 200)  # 纸面上的点核
+                before = abs(source.astype(float)-clean)[region].mean()
+                after = abs(output.astype(float)-clean)[region].mean()
+                self.assertLess(after, before*.15)
+                np.testing.assert_array_equal(output[~mask.footprint], source[~mask.footprint])
+                # 正文像素不得被增亮成纸色
+                printed = clean.mean(2) < 30
+                self.assertLess(np.mean(output[printed].mean(1) > 200), .02)
+
 
 if __name__ == '__main__':
     unittest.main()

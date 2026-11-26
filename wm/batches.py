@@ -109,7 +109,7 @@ class BatchWorker(QThread):
             layer, info = prompt_detect.locate_strokes(
                 page.image, batch.prompt_query, service, thr,
                 close_px=close_px, use_ocr=use_ocr,
-                treatment=batch.prompt_treatment)
+                treatment=batch.prompt_treatment, style=batch.style)
         except ServiceDied:
             # 常驻服务崩溃：重启一次再试；仍失败则按运行失败上抛。
             service.stop()
@@ -118,7 +118,7 @@ class BatchWorker(QThread):
             layer, info = prompt_detect.locate_strokes(
                 page.image, batch.prompt_query, service, thr,
                 close_px=close_px, use_ocr=use_ocr,
-                treatment=batch.prompt_treatment)
+                treatment=batch.prompt_treatment, style=batch.style)
         if (info.get("treatment") == "box" and info.get("text_overlap_ratio", 0) > 0.03):
             self.update.emit(dict(
                 kind="stage", batch=batch.uid, index=index,

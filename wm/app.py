@@ -576,7 +576,9 @@ class MainWindow(QMainWindow):
         self.style_box = QComboBox()
         self.style_box.setEditable(True)
         self.style_box.addItems(list(STYLE_LABELS.values()))
-        self.style_box.setToolTip("自动识别会依次检查水印类型；也可选择样式或输入中文描述")
+        self.style_box.setToolTip("自动识别会依次检查水印类型；也可选择样式或输入中文描述。"
+                                  "提示词定位模式下，选定样式（如点阵水印）会把模型框内的"
+                                  "检测路由到对应专用通道；保持「自动识别」则按原笔画逻辑。")
         find_grid.addWidget(QLabel("水印样式"), 4, 0)
         find_grid.addWidget(self.style_box, 4, 1, 1, 2)
         row = 5
@@ -623,7 +625,8 @@ class MainWindow(QMainWindow):
         return box
 
     def _update_mode_controls(self) -> None:
-        """按当前找水印方式切换专属控件显隐（样式↔服务方式/提示词/处理方式互斥）。"""
+        """按当前找水印方式切换专属控件显隐。提示词模式下样式下拉保留可见：
+        此时它是框内检测的路由提示（默认「自动识别」保持原按笔画行为）。"""
         prompt = self.mode_box.currentData() == "prompt"
         grid = self.service_box.parentWidget().layout()
         self.service_box.setVisible(prompt)
@@ -632,8 +635,8 @@ class MainWindow(QMainWindow):
         grid.itemAtPosition(2, 0).widget().setVisible(prompt)
         self.treatment_box.setVisible(prompt)
         grid.itemAtPosition(3, 0).widget().setVisible(prompt)
-        self.style_box.setVisible(not prompt)
-        grid.itemAtPosition(4, 0).widget().setVisible(not prompt)
+        self.style_box.setVisible(True)
+        grid.itemAtPosition(4, 0).widget().setVisible(True)
 
     def _mode_changed(self) -> None:
         self._update_mode_controls()
