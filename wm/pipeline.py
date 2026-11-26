@@ -88,6 +88,9 @@ def _process_one(page: PageImage, mask: MaskLayer, thr: Thresholds,
     if block is not None and verdict_mod.FailureCode.NEEDS_MANUAL_MASK not in report.failures:
         report.failures.append(verdict_mod.FailureCode.NEEDS_MANUAL_MASK)
     report.conditions["gate_blocked"] = block is not None
+    if block is not None:
+        logging.getLogger(__name__).info(
+            "证据闸门拦截 %s：%s（输出保持原图，转人工）", page.key, block)
     report.page_key = page.key
     return PageResult(
         source=page,
@@ -96,7 +99,7 @@ def _process_one(page: PageImage, mask: MaskLayer, thr: Thresholds,
         mask=mask, verdict=report,
         extracted_watermark=extract_watermark(mask),
         clean_reference=clean_ref,
-        processing={"thresholds": asdict(thr)},
+        processing={"thresholds": asdict(thr), "gate_block_reason": block},
     )
 
 

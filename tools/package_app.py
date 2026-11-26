@@ -173,6 +173,15 @@ def build(windowed: bool, clean: bool, distpath: Path, workpath: Path) -> Path:
         "--add-data", f"{ROOT / 'wm' / 'assets'}{sep}wm/assets",
         # rapidocr 的 OCR 模型与配置随 wheel 安装，需显式收集
         "--collect-data", "rapidocr_onnxruntime",
+        # rapidocr 的 det/cls/rec 子模块由 importlib 动态加载
+        # （rapid_ocr_api.init_module），静态分析收集不到；缺失时 RapidOCR()
+        # 初始化抛 ImportError，OCR 静默失效（2026-11-26 打包批次实测：
+        # 提示词定位置信度塌缩、60/70 透明度档被证据闸门拦截）。
+        # 其依赖 pyclipper/shapely/six 一并显式声明。
+        "--collect-submodules", "rapidocr_onnxruntime",
+        "--hidden-import", "pyclipper",
+        "--hidden-import", "shapely",
+        "--hidden-import", "six",
     ]
     for mod in EXCLUDES:
         args += ["--exclude-module", mod]

@@ -655,10 +655,12 @@ class MainWindow(QMainWindow):
         if not wevisone_client.Service.available():
             self.status.setText("提示词定位不可用：未找到 WeVisOne 环境"
                                 "（out/third_party/WeVisOne-VL），可先改用自动识别。")
+            logging.getLogger(__name__).warning("提示词定位不可用：未找到 WeVisOne 环境")
             return
         if self.wevisone.running or self._warm_thread is not None:
             return
         self.status.setText("提示词模型启动中…（首次加载约 20–60 秒）")
+        logging.getLogger(__name__).info("提示词模型服务启动中（常驻预热）")
         self._warm_thread = _ServiceWarmThread(self.wevisone, self)
         self._warm_thread.done.connect(self._warm_finished)
         self._warm_thread.start()
@@ -667,8 +669,10 @@ class MainWindow(QMainWindow):
         self._warm_thread = None
         if error:
             self.status.setText(f"提示词模型启动失败：{error}")
+            logging.getLogger(__name__).warning("提示词模型启动失败：%s", error)
         elif self.mode_box.currentData() == "prompt":
             self.status.setText("提示词模型已就绪（常驻）。")
+            logging.getLogger(__name__).info("提示词模型已就绪（常驻）")
 
     def _stop_wevisone(self, message: str | None = None) -> None:
         if self._warm_thread is not None:
@@ -676,6 +680,7 @@ class MainWindow(QMainWindow):
             self._warm_thread = None
         if self.wevisone.running:
             self.wevisone.stop()
+            logging.getLogger(__name__).info("提示词模型服务已停止")
             if message:
                 self.status.setText(message)
 
@@ -897,6 +902,9 @@ class MainWindow(QMainWindow):
         self.progress.setMaximum(len(pages))
         self.progress.setValue(0)
         self.status.setText(f"已新增 {batch.name}，共 {len(pages)} 张")
+        logging.getLogger(__name__).info(
+            "新增批次：「%s」共 %d 张，来源 %s", batch.name, len(pages),
+            files[0] if len(files) == 1 else f"{len(files)} 个文件（根目录 {root}）")
 
     def append_files(self) -> None:
         if not self.batch or (self.worker and self.worker.isRunning()):
@@ -918,6 +926,9 @@ class MainWindow(QMainWindow):
         self.batch.invalidate()
         self.refresh_batches()
         self.select_batch(self.batch_list.currentRow())
+        logging.getLogger(__name__).info(
+            "追加图片：「%s」新增 %d 张，批次共 %d 张",
+            self.batch.name, len(pages), len(self.batch.pages))
 
     def export_results(self) -> None:
         if self._selection_edit is not None and self._selection_edit.dirty:
@@ -953,6 +964,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "导出失败", "无法保存结果，请检查目录的写入权限和剩余磁盘空间。")
             return
         self.status.setText(f"已导出结果、原图与水印选区；各批次 review.html 可逐图复核 → {root}")
+        logging.getLogger(__name__).info("导出结果：范围=%s，目录=%s", scope, root)
 
     def set_busy(self, busy: bool) -> None:
         busy = busy or self._assist_busy
@@ -1256,6 +1268,11 @@ class MainWindow(QMainWindow):
         self.pause_btn.setChecked(False)
         self.set_busy(True)
         self.status.setText(f"开始处理，共 {self.worker.total} 张；已有结果将在各张重跑后更新")
+        logging.getLogger(__name__).info(
+            "开始处理：范围=%s，%d 个批次共 %d 张",
+            "全部批次" if scope == "all" and only_page is None else
+            ("当前图片" if only_page is not None else "当前批次"),
+            len(jobs), self.worker.total)
         self.worker.start()
         self._batch_time_timer.start()
 
@@ -1264,11 +1281,13 @@ class MainWindow(QMainWindow):
             self.worker.pause(paused)
             self.pause_btn.setText("继续" if paused else "暂停")
             self.status.setText("已请求暂停，当前图片完成后生效" if paused else "继续处理")
+            logging.getLogger(__name__).info("队列%s", "暂停请求" if paused else "继续")
 
     def stop_queue(self) -> None:
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.status.setText("已请求停止，当前图片完成后生效")
+            logging.getLogger(__name__).info("队列停止请求")
             self.pause_btn.setEnabled(False)
             self.stop_btn.setEnabled(False)
 
@@ -1330,6 +1349,9 @@ class MainWindow(QMainWindow):
             counts[state] = counts.get(state, 0) + 1
         summary = " · ".join(f"{state} {count}" for state, count in counts.items())
         self.status.setText(f"{'已停止' if worker.stopped else '完成'} · 本次 {worker.done}/{worker.total} 张 · {summary}")
+        logging.getLogger(__name__).info(
+            "处理结束：%s，本次 %d/%d 张，%s",
+            "已停止" if worker.stopped else "完成", worker.done, worker.total, summary)
 
     def closeEvent(self, event) -> None:
         if self._assist_busy:

@@ -16,6 +16,7 @@ profile and is left for the watermark detector to claim.
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
 from typing import Any
 
@@ -114,8 +115,12 @@ def _get_engine():
         try:
             from rapidocr_onnxruntime import RapidOCR
             _engine = RapidOCR()
-        except Exception:
+            logging.getLogger(__name__).info("OCR 引擎已就绪（正文保护与 OCR 行种子启用）")
+        except Exception as exc:
             _engine_failed = True
+            # 降级必须可见：打包漏依赖曾导致 OCR 静默失效、批次质量塌缩
+            logging.getLogger(__name__).warning(
+                "OCR 引擎初始化失败，文字识别与正文保护降级关闭：%r", exc)
         return _engine
 
 

@@ -136,6 +136,16 @@ class BatchWorker(QThread):
             batch, indices, thr, close_px, use_ocr = job[:5]
             style = job[5] if len(job) > 5 else None
             automatic_selection = bool(job[6]) if len(job) > 6 else False
+            detection = (f"提示词定位（提示词={batch.prompt_query!r}，"
+                         f"处理方式={batch.prompt_treatment}，服务={batch.service_mode}）"
+                         if batch.detection_mode == "prompt" else "自动识别")
+            logging.getLogger(__name__).info(
+                "批次开始：「%s」%d 张；找水印=%s；判定阈值=%.0f%% 笔画连接=%dpx "
+                "选区外扩=%dpx 修复参考范围=%dpx 分块重叠=%dpx OCR=%s 样式=%s",
+                batch.name, len(indices), detection, thr.mask_alpha_min * 100,
+                close_px, thr.lama_mask_dilate, thr.lama_context_margin,
+                thr.lama_tile_overlap, "开" if use_ocr else "关", style or "自动")
+            job_t0 = perf_counter()
             groups = {}
             unavailable_priors = set()
             for page in batch.pages:
@@ -222,6 +232,29 @@ class BatchWorker(QThread):
                 self.outcomes.append("运行失败" if result is None else
                                      "质量未通过" if not result.verdict.passed else
                                      "待复核" if result.verdict.review_needed else "通过")
+                if result is not None:
+                    proc = getattr(result, "processing", None) or {}
+                    verdict = result.verdict
+                    det = proc.get("prompt_detection") or {}
+                    gate = proc.get("gate_block_reason")
+                    repairs = getattr(verdict, "repairs", None) or []
+                    failures = getattr(verdict, "failures", None) or []
+                    logging.getLogger(__name__).info(
+                        "「%s」第 %d/%d 张 %s：状态=%s；方法=%s 置信度=%.2f "
+                        "选区=%dpx（覆盖 %.2f%%）；修复=%s；耗时=%dms"
+                        "（检测 %dms/修复 %dms%s）；闸门=%s；失败=%s",
+                        batch.name, index + 1, len(batch.pages), page.key,
+                        self.outcomes[-1], result.mask.method, result.mask.confidence,
+                        int((result.mask.binary(thr.mask_alpha_min) > 0).sum()),
+                        result.mask.coverage(thr.mask_alpha_min) * 100,
+                        "+".join(str(r) for r in repairs) or "无（未改动）",
+                        verdict.elapsed_ms,
+                        verdict.stage_ms.get("mask_ms", 0),
+                        verdict.stage_ms.get("repair_ms", 0),
+                        f"/模型服务 {det['service_ms']}ms"
+                        if det.get("service_ms") is not None else "",
+                        gate or "通过",
+                        ",".join(str(f) for f in failures) or "无")
                 self.done += 1
                 if self._active_timing is not None:
                     self._active_timing.complete_page(failed=result is None)
@@ -230,3 +263,6 @@ class BatchWorker(QThread):
             if self._active_timing is not None:
                 self._active_timing.finish(stopped=False)
                 self._active_timing = None
+            logging.getLogger(__name__).info(
+                "批次结束：「%s」，本批 %d 张用时 %.1f 秒",
+                batch.name, len(indices), perf_counter() - job_t0)
