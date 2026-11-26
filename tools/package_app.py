@@ -9,7 +9,9 @@
     去水印(.exe) + _internal/   PyInstaller one-dir 运行体
     models/                     LaMa 修复模型（从项目 models/ 复制，可替换）
     config/logging.json         日志级别配置
+    tools/wevisone_server.py    提示词定位推理服务脚本（由底座环境的 Python 执行）
     使用说明.txt
+    合并底座.ps1 / .bat         把「去水印底座包」并入本目录的一键脚本
 
 把整个 dist/去水印/ 目录拷给目标机器即可运行；代码内通过 wm.paths.app_root()
 定位可执行文件旁边的 models/ 与 config/。
@@ -42,9 +44,105 @@ README_TEXT = """离线智能去水印 — 可执行包
    请保持 models/ 目录与可执行文件在同一级，不要删除。
 3. 日志写在 logs/wm.log；日志级别在 config/logging.json 的 level 字段
    （DEBUG/INFO/WARNING/ERROR），界面里也可调整。
-4. 界面中的「提示词定位」依赖单独的 WeVisOne 大模型环境，本包不含该模型，
-   请选择默认的「自动识别」。
+4. 界面中的「提示词定位」依赖单独的 WeVisOne 大模型环境（「去水印底座包」）：
+   底座包与本包解压到同一位置会自动合并；若分开了解压，双击「合并底座.bat」
+   即可把底座的 models/WeVisOne-VL-2B 与 wevisone_runtime/ 并入本目录。
+   没有底座包时请用默认的「自动识别」。
 5. 完全离线运行，不需要网络。
+"""
+
+# 随主程序包分发的「合并底座」脚本：底座包（模型 + 便携环境）打得少、主程序包
+# 更新频繁，收件人两个包分开解压时用它一键并入 exe 旁。逻辑维护在这里
+# （stage_runtime_files 每次打包重新生成），不单独发脚本文件。
+MERGE_PS1 = r"""# 合并底座.ps1 —— 把「去水印底座包」的模型与运行环境并入本程序目录
+#
+# 什么时候用：本目录（去水印.exe 旁）还没有 wevisone_runtime\ 或
+# models\WeVisOne-VL-2B\，需要把底座包的内容并进来才能用「提示词定位」。
+# 两个 zip 已解压到同一位置时会自动合并，本脚本会提示"无需合并"，不会重复搬运。
+#
+# 用法：
+#   双击「合并底座.bat」（自动找本目录下的「去水印」子目录，找不到会请你把底座目录拖进来）
+#   或命令行：powershell -NoProfile -ExecutionPolicy Bypass -File 合并底座.ps1 [-BaseDir D:\路径\去水印] [-Copy]
+#
+# 参数：
+#   -BaseDir  底座包解压出的「去水印」目录（给它的上一级目录也行）
+#   -Copy     用复制代替移动（默认移动；同盘移动是瞬时的，跨盘搬 7GB 较慢）
+param(
+    [string]$BaseDir = "",
+    [switch]$Copy
+)
+$ErrorActionPreference = 'Stop'
+if (-not $PSScriptRoot) { $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
+$target = $PSScriptRoot
+
+function Test-Merged([string]$root) {
+    return (Test-Path (Join-Path $root 'wevisone_runtime\python\python.exe')) -and
+           (Test-Path (Join-Path $root 'models\WeVisOne-VL-2B\model.safetensors'))
+}
+
+function Resolve-Base([string]$dir) {
+    # 接受底座目录本身，或其上一级（里面还有一层「去水印」）
+    if (Test-Path (Join-Path $dir 'wevisone_runtime\python\python.exe')) { return $dir }
+    if (Test-Path (Join-Path $dir '去水印\wevisone_runtime\python\python.exe')) { return (Join-Path $dir '去水印') }
+    return $null
+}
+
+if (Test-Merged $target) {
+    Write-Host '本目录已包含提示词环境（wevisone_runtime 与 models\WeVisOne-VL-2B），无需合并。'
+    exit 0
+}
+
+$base = $null
+foreach ($c in @($BaseDir, (Join-Path $target '去水印'))) {
+    if ($c) { $base = Resolve-Base $c; if ($base) { break } }
+}
+if (-not $base) {
+    $in = Read-Host '未找到底座目录。请把底座包解压出的「去水印」文件夹拖到本窗口，然后按回车'
+    $base = Resolve-Base ($in.Trim().Trim('"'))
+}
+if (-not $base) {
+    Write-Host '错误：底座目录无效——里面应有 wevisone_runtime\ 与 models\WeVisOne-VL-2B\。'
+    Write-Host '请确认底座包已解压，或用 -BaseDir 指定其位置后重跑。'
+    exit 1
+}
+Write-Host "底座目录：$base"
+Write-Host "并入目标：$target"
+
+$items = @('wevisone_runtime', 'models\WeVisOne-VL-2B', 'models\inpainting_lama_2025jan.onnx', '底座说明.txt')
+foreach ($it in $items) {
+    $src = Join-Path $base $it
+    $dst = Join-Path $target $it
+    if (-not (Test-Path $src)) { continue }
+    if (Test-Path $dst) {
+        $same = (Test-Path $src -PathType Leaf) -and ((Get-Item $src).Length -eq (Get-Item $dst).Length)
+        if ($same) { Write-Host "跳过（已存在且大小相同）：$it" } else { Write-Host "跳过（目标已存在）：$it" }
+        continue
+    }
+    $parent = Split-Path $dst -Parent
+    if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent | Out-Null }
+    Write-Host "并入：$it …"
+    if ($Copy) { Copy-Item $src $dst -Recurse -Force } else { Move-Item $src $dst -Force }
+}
+
+if (Test-Merged $target) {
+    Write-Host ''
+    Write-Host '合并完成！双击 去水印.exe，找水印方式选「提示词定位」即可使用。'
+    Write-Host '（首次使用需加载模型约 20-60 秒，状态栏会显示进度）'
+    exit 0
+}
+Write-Host '错误：合并后仍缺 wevisone_runtime\python\python.exe 或 models\WeVisOne-VL-2B\model.safetensors，'
+Write-Host '请检查底座包是否完整（可重新解压底座 zip 后重跑本脚本）。'
+exit 1
+"""
+
+# cmd 按 ANSI 读 .bat，中文内容会乱码；保持纯 ASCII，中文文件名靠 %~dpn0
+# （bat 自身路径去扩展名）在运行时拼出，与 ps1 文件名始终保持一致。
+MERGE_BAT = """@echo off
+rem Merge-base bootstrap: run the sibling .ps1 with execution policy bypass.
+rem Keep this file pure ASCII; the Chinese .ps1 name is resolved at runtime
+rem via %~dpn0 (this script's own full path without extension).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dpn0.ps1" %*
+pause
 """
 
 
@@ -104,6 +202,11 @@ def stage_runtime_files(bundle: Path, *, with_models: bool = True) -> None:
     tools_dst = bundle / "tools"
     tools_dst.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "tools" / "wevisone_server.py", tools_dst / "wevisone_server.py")
+
+    # 合并底座脚本：ps1 用 UTF-8 带 BOM（PowerShell 5.1 对无 BOM 文件按 ANSI
+    # 误读中文）；bat 纯 ASCII（cmd 按 ANSI 解析批处理），编码声明即防线。
+    (bundle / "合并底座.ps1").write_text(MERGE_PS1, encoding="utf-8-sig")
+    (bundle / "合并底座.bat").write_text(MERGE_BAT, encoding="ascii")
 
     readme = README_TEXT
     if not with_models:

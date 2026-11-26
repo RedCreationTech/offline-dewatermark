@@ -1,9 +1,10 @@
 # 打包流水线：打「主程序包」（代码 + 界面/推理依赖 + LaMa 修复模型）。
 #
 # 触发：推 main、打 v* 标签、或手动 Actions → 打包 → Run workflow。
-# 产物：Actions 运行页底部的 Artifacts（dewatermark-windows），解压后补上
-#       即完整可运行自动识别（OCR 模型随依赖在包内）；只有「提示词定位」
-#       需要再叠加「去水印底座包」（tools/build_runtime_base.py 一次性打好，
+# 产物：Actions 运行页底部的 Artifacts（dewatermark-windows），zip 内含
+#       「去水印」根目录，与底座包解压到同一位置即自动合并；解压后即完整
+#       可运行自动识别（OCR 模型随依赖在包内）；只有「提示词定位」需要再
+#       叠加「去水印底座包」（tools/build_runtime_base.py 一次性打好，
 #       见 docs/底座包打包说明.md）。
 #
 # 说明：
@@ -104,6 +105,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: dist/去水印/
+          # 传 dist/ 而非 dist/去水印/：让 zip 带「去水印」根目录，与底座包
+          # 结构一致，两个 zip 解压到同一位置才能自动合并（upload-artifact
+          # 按给定路径为根打包内容，给目录本身则内容平铺）。
+          path: dist/
           compression-level: 6
           retention-days: 7
