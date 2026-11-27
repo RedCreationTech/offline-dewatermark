@@ -52,8 +52,18 @@ ANGLE_LEVELS = [("tilt15", -15.0, "缓斜-15°", "缓斜15"),
                 ("tilt55", -55.0, "陡斜-55°", "陡斜55"),
                 ("horizontal", 0.0, "水平0°", "水平0"),
                 ("pos25", 25.0, "反向+25°", "反向25")]
+# 点阵组：整页周期点格水印（paper_grid/periodic 路径首次分层覆盖）。
+# 基准=点距22·灰点50%；每档只变一个量。深色点走邻域插值路、彩点走色度分支
+# （同事 79320a6 修复的两条路首次获得分层回归）。
+DOTS_LEVELS = [("base22", 22, "gray", 0.5, "基准点距22"),
+               ("dense14", 14, "gray", 0.5, "密点距14"),
+               ("sparse32", 32, "gray", 0.5, "疏点距32"),
+               ("faint22", 22, "gray", 0.25, "淡点22"),
+               ("dark22", 22, "dark", 0.85, "深色点22"),
+               ("red22", 22, "red", 0.5, "红彩点22")]
 GROUP_LABEL = {"opacity": "透明度组", "color": "颜色组", "size": "尺寸组", "bg": "底图组",
-               "resolution": "分辨率组", "spacing": "间距组", "angle": "角度组"}
+               "resolution": "分辨率组", "spacing": "间距组", "angle": "角度组",
+               "dots": "点阵组"}
 BG_LABEL = {"white": "纯白纸", "photo": "照片", "document": "文档"}
 # 样本 id 里的底图前缀（白底不加前缀，保持历史批次 id 不变、不撞名）
 BG_SHORT = {"white": "", "photo": "照片底_", "document": "文档底_"}
@@ -88,6 +98,24 @@ def oblique_alpha(shape, px: int, dpi: int = 200,
                   spacing_y_px=sy, angle_deg=angle_deg, stagger=STAGGER,
                   row_mult_scale=row_mult_scale)
     return alpha.astype(np.float32) / 255.0, params
+
+
+def dot_grid_alpha(shape, pitch: int, dpi: float = 200.0) -> tuple[np.ndarray, dict]:
+    """点阵水印覆盖图：整页严格周期点格（与 tests/test_paper_grid 同族形态）。
+    点半径随点距缩放，边缘 1px 抗锯齿渐变；圆心偏移非对称，避免与页边对齐巧合。"""
+    h, w = shape[:2]
+    scale = dpi / 200.0
+    p = max(6, int(round(pitch * scale)))
+    r = max(1.6, p * .11)
+    ox, oy = int(p * .23), int(p * .36)
+    yy, xx = np.indices((h, w))
+    dx = (xx - ox + p / 2) % p - p / 2
+    dy = (yy - oy + p / 2) % p - p / 2
+    alpha = np.clip(r + .6 - np.sqrt(dx * dx + dy * dy), 0, 1)
+    params = dict(pitch_px=p, dot_radius_px=round(r, 2), dot_offset_px=[ox, oy],
+                  font_px=0, text_width_px=0, spacing_x_px=p, spacing_y_px=p,
+                  angle_deg=0.0, stagger=0.0, row_mult_scale=1.0)
+    return alpha.astype(np.float32), params
 
 
 def page_px(dpi: float) -> tuple[int, int]:
@@ -147,6 +175,9 @@ def plan(only: list[str], bgs: list[str], levels: list[str] | None = None) -> li
     if "angle" in only:
         for key, deg, cell, name in ANGLE_LEVELS:
             push("angle", key, name, cell, angle=deg)
+    if "dots" in only:
+        for key, pitch, color, strength, cell in DOTS_LEVELS:
+            push("dots", key, cell, cell, pitch=pitch, color=color, strength=strength)
     if not cells:
         raise SystemExit(f"--only 里没有可生成的组：{only}")
     return cells
@@ -176,9 +207,12 @@ def prepare_dataset(args: argparse.Namespace) -> None:
         level = c["level"]
         dpi = float(level["dpi"])
         base_path, base = bases[(level["bg"], dpi)]
-        alpha, params = oblique_alpha(base.shape, BASE_PX * level["size"], dpi,
-                                      row_mult_scale=float(level.get("row_mult", 1.0)),
-                                      angle_deg=float(level.get("angle", ANGLE_DEG)))
+        if c["group"] == "dots":
+            alpha, params = dot_grid_alpha(base.shape, pitch=int(level["pitch"]), dpi=dpi)
+        else:
+            alpha, params = oblique_alpha(base.shape, BASE_PX * level["size"], dpi,
+                                          row_mult_scale=float(level.get("row_mult", 1.0)),
+                                          angle_deg=float(level.get("angle", ANGLE_DEG)))
         rgb = np.array(COLOR_RGB[level["color"]], dtype=np.float64)
         strength = float(np.clip(level["strength"], 0.02, 0.95))
         watermarked = apply_watermark(base, alpha, rgb, strength)
@@ -195,7 +229,7 @@ def prepare_dataset(args: argparse.Namespace) -> None:
         corner = float(min((alpha[:n, :n] > 0.5).mean(), (alpha[:n, -n:] > 0.5).mean(),
                            (alpha[-n:, :n] > 0.5).mean(), (alpha[-n:, -n:] > 0.5).mean()))
         samples.append({
-            "sample_id": sid, "style": STYLE, "group": GROUP_LABEL[c["group"]],
+            "sample_id": sid, "style": "dot_grid" if c["group"] == "dots" else STYLE, "group": GROUP_LABEL[c["group"]],
             "group_key": c["group"], "cell_key": c["key"], "cell": c["cell"],
             "bg_type": level["bg"],
             "input_sha256": digest(out_dir / f"{sid}.png"),
@@ -395,7 +429,7 @@ def main() -> int:
     generator.add_argument('--base-dir', type=Path, default=ROOT / 'out/分层测试集_v1/参考',
                            help='复用干净底图的目录（按 底图_宽x高 匹配），找不到时在本轮渲染')
     generator.add_argument('--only', nargs='+', default=['opacity', 'color', 'size'],
-                           choices=['opacity', 'color', 'size', 'bg', 'resolution', 'spacing', 'angle'])
+                           choices=['opacity', 'color', 'size', 'bg', 'resolution', 'spacing', 'angle', 'dots'])
     generator.add_argument('--levels', nargs='+', help='只生成指定档位键')
     generator.add_argument('--bgs', nargs='+', default=['white'], choices=BG_TYPES)
     generator.add_argument('--base-bg', default='white', choices=BG_TYPES,
