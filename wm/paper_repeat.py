@@ -12,6 +12,99 @@ from . import ocr, repeated
 from .contract import MaskLayer, MaskSource
 
 
+def _fit_columns(line_peaks, step_hint):
+    """全局晶格拟合：列位置 = a_行 + b·j + d_行·(j 奇偶)，最小二乘一次拟合。
+
+    水印是程序按固定网格排版的，位置是公式不是预测。逐行「行首 + 中位步长×序号」
+    的算术外推会把量化噪声累积成行尾漂移；全局拟合用所有证据峰平摊，外推误差
+    降到亚像素级。斜率 b 全行共享（同一晶格），相位 a 与奇偶项 d 每行独立
+    （错行排版、各行 j 锚点奇偶不一致，共享奇偶项会互相抵消）。
+
+    line_peaks: 每行的证据峰 x 列表（可为空列表）。
+    返回 (params, b)：params[i] = (a, d) 或 None（证据不足的行）；
+    拟合不成立返回 None（调用方回退旧逻辑）。
+    """
+    rows = []
+    for li, xs in enumerate(line_peaks):
+        if len(xs) < 2:
+            continue
+        xs = np.asarray(sorted(xs), float)
+        rows.append((li, xs))
+    if not rows:
+        return None
+    # 步长单位取「各行差值中位数的最小值」：晶格严格周期，差值是真步长的整数倍，
+    # 只要有任一行检出了相邻实例就是真步长；疏排页 step_hint（验证峰中位步长）
+    # 可能本身是 2 倍步长，直接用它编序号会把 b 拟成 2 倍（s014 实测）。
+    unit = min(float(np.median(np.diff(xs))) for _, xs in rows)
+    if not .5 * step_hint < unit < 2.0 * step_hint:
+        return None
+    rows = [(li, xs, np.concatenate([[0], np.cumsum(
+        np.maximum(1, np.round(np.diff(xs) / unit)))]).astype(float)) for li, xs in rows]
+    R = len(rows)
+    n_obs = sum(len(r[1]) for r in rows)
+    # 奇偶项每行多一个未知数：平均每行不足 3 个观测时 b 会不可辨识
+    # （2 峰行被 a、d 精确吸收），宁可不要奇偶项。
+    use_parity = n_obs >= 3 * R + 2
+    n_unk = (2 * R if use_parity else R) + 1
+    if n_obs < n_unk + 1:
+        return None
+    A = np.zeros((n_obs, n_unk))
+    yv = np.zeros(n_obs)
+    k = 0
+    for rk, (li, xs, jj) in enumerate(rows):
+        for x, j in zip(xs, jj):
+            A[k, rk] = 1.0
+            if use_parity:
+                A[k, R + rk] = j % 2
+            A[k, n_unk - 1] = j
+            yv[k] = x
+            k += 1
+    sol, *_ = np.linalg.lstsq(A, yv, rcond=None)
+    b = float(sol[n_unk - 1])
+    if not .7 * unit < b < 1.4 * unit:
+        return None
+    # 晶格是严格周期排版，拟合好则残差仅 NCC 峰位量化噪声（±2px）；
+    # 残差大说明 j 序号认错（误差是步长量级），宁可回退旧逻辑。
+    if float(np.abs(A @ sol - yv).max()) > min(unit * .35, 6.0):
+        return None
+    params = [None] * len(line_peaks)
+    for rk, (li, xs, jj) in enumerate(rows):
+        params[li] = (float(sol[rk]), float(sol[R + rk]) if use_parity else 0.0)
+    return params, b
+
+
+def _fit_row_slope(line_peaks_xy):
+    """全局行斜率拟合：去旋转角有残差时，行在去旋转系里仍带统一斜率（实测
+    ~0.011 ≈ 0.63°，全行 y 落差 11-23px），常数行心盖章沿行越盖越歪（页边
+    漏选真凶）。斜率全页共享（同一角度残差），截距每行独立。
+
+    line_peaks_xy: 每行 [(x, y), ...]（可为空）。返回 (s, {行号: 截距}) 或 None。
+    """
+    rows = [(li, np.asarray(pts, float)) for li, pts in enumerate(line_peaks_xy)
+            if len(pts) >= 2]
+    if len(rows) < 2:
+        return None
+    n_obs = sum(len(p) for _, p in rows)
+    if n_obs < len(rows) + 2:
+        return None
+    A = np.zeros((n_obs, len(rows) + 1))
+    yv = np.zeros(n_obs)
+    k = 0
+    for rk, (li, pts) in enumerate(rows):
+        for x, y in pts:
+            A[k, rk] = 1.0
+            A[k, len(rows)] = x
+            yv[k] = y
+            k += 1
+    sol, *_ = np.linalg.lstsq(A, yv, rcond=None)
+    s = float(sol[len(rows)])
+    if abs(s) > .05:
+        return None
+    if float(np.abs(A @ sol - yv).max()) > 4.0:
+        return None
+    return s, {li: float(sol[rk]) for rk, (li, _) in enumerate(rows)}
+
+
 def table_rules(img):
     gray = img.astype(np.float32).mean(2)
     length = max(25, min(100, min(gray.shape)//12))
@@ -261,30 +354,87 @@ def estimate(img):
                            tf32[sy0:sy0 + hh, sx0:sx0 + ww],
                            out=lattice[ys0:ys0 + hh, xs0:xs0 + ww])
 
+        line_infos = []
         for y_line, x0_row, step_x in lines:
             yi = int(round(y_line))
             sy0 = max(0, min(sh - 1, yi - 12))
             sy1 = max(0, min(sh, yi + 13))
-            if sy1 <= sy0:
-                continue
-            band = row_scores[sy0:sy1]
-            prof = band.max(0)
-            cand = np.flatnonzero(prof >= 0.30)
-            order = cand[np.argsort(prof[cand])[::-1]] if len(cand) else []
             taken = []
-            for c in order:
-                if all(abs(int(c) - t) > step_x * .5 for t in taken):
-                    taken.append(int(c))
-            for c in taken:
-                _stamp_at(c, sy0 + int(np.argmax(band[:, c])))
-            j_lo = int(np.floor((0 - x0_row) / step_x)) - 1
-            j_hi = int(np.ceil((fw - x0_row) / step_x)) + 1
-            for j in range(j_lo, j_hi + 1):
-                xi = int(round(x0_row + j * step_x))
+            if sy1 > sy0:
+                band = row_scores[sy0:sy1]
+                prof = band.max(0)
+                cand = np.flatnonzero(prof >= 0.30)
+                order = cand[np.argsort(prof[cand])[::-1]] if len(cand) else []
+                for c in order:
+                    if all(abs(int(c) - t[0]) > step_x * .5 for t in taken):
+                        ypk = sy0 + int(np.argmax(band[:, c]))
+                        taken.append((int(c), ypk))
+            line_infos.append([yi, x0_row, step_x, taken])
+        # 全局行斜率（2026-11-27，页边漏选真凶）：去旋转角有残差（实测 ~0.63°）
+        # 时行仍是斜的，全行 y 落差 11-23px——常数行心盖章沿行越盖越歪，行尾
+        # 偏出 ~10px 盖进字缝被验证处决。斜率全页共享一次拟合；拟合成立后按
+        # 斜行带重检（平带 ±12px 装不下 23px 落差，行尾实例原本检不出），
+        # 证据峰变多再反哺列拟合。
+        slope_fit = _fit_row_slope([t for _, _, _, t in line_infos])
+        if slope_fit is not None:
+            s_sl, c_map = slope_fit
+            rw = row_scores.shape[1]
+            xs_all = np.arange(rw)
+            for li, info in enumerate(line_infos):
+                yi, x0_row, step_x, taken = info
+                c0 = c_map.get(li)
+                base = (c0 + s_sl * xs_all) if c0 is not None else (yi + s_sl * (xs_all - fw / 2))
+                centers = np.round(base).astype(int)
+                prof = np.zeros(rw, np.float32)
+                for off in range(-12, 13):
+                    prof = np.maximum(prof, row_scores[np.clip(centers + off, 0, sh - 1), xs_all])
+                cand = np.flatnonzero(prof >= 0.30)
+                order = cand[np.argsort(prof[cand])[::-1]] if len(cand) else []
+                taken2 = []
+                for c in order:
+                    if all(abs(int(c) - t[0]) > step_x * .5 for t in taken2):
+                        cy = int(centers[c])
+                        y0w = max(0, min(sh - 1, cy - 12))
+                        y1w = max(0, min(sh, cy + 13))
+                        ypk = y0w + int(np.argmax(row_scores[y0w:y1w, c])) if y1w > y0w else cy
+                        taken2.append((int(c), ypk))
+                info[3] = taken2
+        for yi, x0_row, step_x, taken in line_infos:
+            for c, ypk in taken:
+                _stamp_at(c, ypk)
+        # 全局列拟合：列位置 = a_行 + b·j + d_行·(j 奇偶)，替换「行首+中位步长
+        # ×序号」算术外推（量化噪声累积成行尾漂移）。拟合不成立的行回退旧逻辑。
+        steps = [s for _, _, s, t in line_infos if len(t) >= 2] or [s for _, _, s, _ in line_infos]
+        fit = _fit_columns([[x for x, _ in t] for _, _, _, t in line_infos], float(np.median(steps)))
+        for li, (yi, x0_row, step_x, taken) in enumerate(line_infos):
+            params = fit[0][li] if fit is not None else None
+            if params is not None:
+                # 本行有证据拟合：位置由公式给出，精确到亚像素
+                a_row, d_par = params
+                b_col = fit[1]
+                j_lo = int(np.floor((0 - a_row) / b_col)) - 2
+                j_hi = int(np.ceil((fw - a_row) / b_col)) + 2
+                positions = [int(round(a_row + j * b_col + d_par * (j % 2)))
+                             for j in range(j_lo, j_hi + 1)]
+            else:
+                # 本行无证据（端部外推行等）：不猜相位，直接密铺地毯——章宽大于
+                # 间隔保证整行无缝覆盖，真假全部由逐像素验证裁决（s014 实测：
+                # 借相位会带 8-17px 行际误差被验证处决，密铺反而零漏选）。
+                dense = max(1, int(tw * .6))
+                positions = list(range(-tw, fw + tw, dense))
+            # 外推章的行坐标同样按斜行公式，不再用常数行心
+            if slope_fit is not None:
+                s2, c_map2 = slope_fit
+                c0 = c_map2.get(li)
+                y_of = (lambda xx, c0=c0: c0 + s2 * xx) if c0 is not None \
+                    else (lambda xx, yi=yi: yi + s2 * (xx - fw / 2))
+            else:
+                y_of = lambda xx, yi=yi: yi
+            for xi in positions:
                 if xi + tw < 0 or xi > fw:
                     continue
-                if all(abs(xi - t) > step_x * .5 for t in taken):
-                    _stamp_at(xi, yi)
+                if all(abs(xi - t[0]) > step_x * .5 for t in taken):
+                    _stamp_at(xi, int(round(y_of(xi))))
         field = np.maximum(field, lattice)
         field *= valid
     coverage = cv2.GaussianBlur(cv2.warpAffine(field, cv2.invertAffineTransform(matrix), (w,h)), (0, 0), 1.2)

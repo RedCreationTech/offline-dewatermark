@@ -87,6 +87,52 @@ class PaperRepeatTests(unittest.TestCase):
             self.assertIsNone(paper_repeat.estimate(photo))
 
 
+class LatticeFitTests(unittest.TestCase):
+    """全局晶格拟合（列位置公式 + 行斜率）：位置来自公式而非算术外推。"""
+
+    def test_columns_recover_exact_lattice_with_gaps(self):
+        # 真晶格 b=1053、每行相位不同、含奇偶抖动；行内漏检造成 2 倍间隔
+        rng = np.random.default_rng(7)
+        b_true = 1053.0
+        lines = []
+        for a in (922.0, 391.0, 914.0, 1444.0):
+            js = [0, 1, 2, 4, 5]  # j=3 漏检
+            lines.append([a + b_true * j + (j % 2) * 4.0 + rng.uniform(-1.5, 1.5)
+                          for j in js])
+        lines.append([])  # 无证据行
+        fit = paper_repeat._fit_columns(lines, 1050.0)
+        self.assertIsNotNone(fit)
+        params, b = fit
+        self.assertAlmostEqual(b, b_true, delta=3.0)
+        # 外推到行尾（j=8，超出全部观测）误差 < 5px
+        a0, d0 = params[0]
+        pred = a0 + b * 8 + d0 * (8 % 2)
+        self.assertAlmostEqual(pred, 922.0 + b_true * 8, delta=5.0)
+        self.assertIsNone(params[4])
+
+    def test_columns_reject_garbage(self):
+        # 峰位乱到不像周期排版时必须拒（回退旧逻辑），不许硬拟合
+        lines = [[100.0, 700.0, 1450.0], [300.0, 1230.0], [50.0, 990.0, 1700.0]]
+        self.assertIsNone(paper_repeat._fit_columns(lines, 900.0))
+
+    def test_row_slope_shared_across_rows(self):
+        # 去旋转残差：所有行共享斜率 0.011，截距不同；行尾 y 落差 ~20px
+        lines = []
+        for c in (423.0, 858.0, 1293.0, 1728.0):
+            lines.append([(x, c + 0.011 * x + (1 if x % 2 else -1))
+                          for x in (900, 1950, 2500)])
+        fit = paper_repeat._fit_row_slope(lines)
+        self.assertIsNotNone(fit)
+        s, intercepts = fit
+        self.assertAlmostEqual(s, 0.011, delta=0.002)
+        self.assertAlmostEqual(intercepts[2], 1293.0, delta=2.0)
+
+    def test_row_slope_rejects_flat_or_chaos(self):
+        self.assertIsNone(paper_repeat._fit_row_slope([[(0, 100)], [(0, 200)]]))
+        chaos = [[(0, 0), (1000, 300)], [(0, 50), (1000, -260)]]
+        self.assertIsNone(paper_repeat._fit_row_slope(chaos))
+
+
 class TableRuleTests(unittest.TestCase):
     def test_uncertain_overlay_fit_does_not_whiten_a_continuous_table_rule(self):
         from wm.contract import MaskLayer
