@@ -198,103 +198,105 @@ def estimate(img):
             _upright += 1
     protected = None if keepout is None else cv2.warpAffine(keepout.astype(np.uint8), matrix,
                     (valid.shape[1],valid.shape[0]),flags=cv2.INTER_NEAREST)>0
-    for x,y,tx,ty,patch in repeated._edge_fragments(feature, valid, template, peaks, protected,
-                                                     band_px=max(120, th * 2)):
+    # 页边加宽碎片匹配已退役：晶格行内证据检测直接找到页边实例，不再需要
+    # 放宽碎片带（实测宽带会让无验证的纸面直填路在白底小字页多选爆 4 倍）。
+    for x,y,tx,ty,patch in repeated._edge_fragments(feature, valid, template, peaks, protected):
         ph,pw=patch.shape
         np.maximum(field[y:y+ph,x:x+pw], patch, out=field[y:y+ph,x:x+pw])
-    # 行格外推补章（2026-11-25）：整行模板在页边实例上 NCC 最高仅 ~0.42（页外
-    # 白填充稀释相关），实测边缘漏选 99.9% 是"该处无章"；字区实例同样被 NCC
-    # 漏。峰已验证行存在与实例 x 位置：对每条有真实峰的行，沿 x 按该行峰间距
-    # 双向外推到页边（中间有空档也补齐），盖同款已验证模板。只外推有真实峰的
-    # 行，不造新样式；field*=valid 兜底页界裁剪。
-    # 补章盖进独立场 field_fill：region 占比闸门装不下时整场撤掉补章回退到
-    # 无补章行为（小字密页笔画周长大，补章+膨胀会顶破 .15——白底 s010 实测
-    # 老路因此整场退到更差路径）；装得下就保留（文档底 s001 边缘修复靠它）。
+    # 晶格全铺 + 行内证据检测（2026-11-25 实验定案，替换行格外推 ±1 档与
+    # 页边加宽膨胀/预算回退补丁）：晶格（真实行心 + 端部行距外推）给出全部
+    # 可能章位只负责"提问"；沿每条行带把 NCC 门槛降到 0.30 重新找章——页边
+    # 裁切实例 NCC ~0.42，全局 0.55 门槛抓不到，行带约束本身杀假峰，章位
+    # 全部来自证据；无证据的外推位也盖章兜底（页角全裁切实例），真假由
+    # 逐像素验证裁决。晶格章模板膨胀 1px 盖住抗锯齿晕圈（实验实测：漏选
+    # 71% 是模板外晕圈；文档底 11 张改善、效果好 6 张零退化）。
     row_groups = []
     for px, py, _s in sorted(peaks, key=lambda p: p[1]):
         for grp in row_groups:
-            if abs(float(np.median([gy for _, gy, _ in grp])) - py) < th * 1.5:
-                grp.append((px, py, _s))
+            if abs(float(np.median([gy for _, gy in grp])) - py) < th * 1.5:
+                grp.append((px, py))
                 break
         else:
-            row_groups.append([(px, py, _s)])
-    field_fill = np.zeros(valid.shape, np.float32)
-    fill_stamps = []
-
-    def _row_stamps(y_row, xs):
-        xs = sorted(xs)
-        diffs = np.diff(xs)
-        step = int(np.median(diffs)) if len(diffs) and np.median(diffs) >= tw * .8 \
-            else int(tw * 1.05)
-        x = xs[0]
-        while x + tw > 0:
-            x -= step
-        while x < valid.shape[1]:
-            if x + tw > 0:
-                fill_stamps.append((x, y_row))
-            x += step
-
-    centers = sorted(float(np.median([gy for _, gy, _ in grp])) for grp in row_groups)
+            row_groups.append([(px, py)])
+    per_row = []
     for grp in row_groups:
-        _row_stamps(int(round(float(np.median([gy for _, gy, _ in grp])))),
-                    [int(x) for x, _, _ in grp])
-    # 行外推：整行实例全被页边裁掉时该行没有峰、上面不外推就整行漏。
-    # 行距取已验证行中心差值中位（要求 ≥3 行且间距一致），只外推一行、只在
-    # 已有章跨度两端各延一档（不铺整行——region 占比闸门 .15 装不下），
-    # 专补页边行带。空白带上 measured≈0 不会误修（验证把关）。
-    row_diffs = np.diff(centers)
-    solid = row_diffs[row_diffs >= th * 2]
-    if len(centers) >= 3 and len(solid) >= 2:
-        y_period = float(np.median(solid))
-        if np.percentile(solid, 75) - np.percentile(solid, 25) < th:
-            xs_all = sorted(int(x) for x, _, _ in peaks)
-            diffs_all = np.diff(xs_all)
-            step_g = int(np.median(diffs_all)) if len(diffs_all) \
-                and np.median(diffs_all) >= tw * .8 else int(tw * 1.05)
-            span_lo, span_hi = xs_all[0] - step_g, xs_all[-1] + tw + step_g
-            for y_extra in (centers[0] - y_period, centers[-1] + y_period):
-                y_row = int(round(y_extra))
-                if 0 <= y_row and y_row + th <= field.shape[0]:
-                    x = span_lo
-                    while x < span_hi:
-                        if x >= 0 and x + tw <= field.shape[1]:
-                            fill_stamps.append((x, y_row))
-                        x += step_g
-    for x, y in fill_stamps:
-        if x >= 0 and 0 <= y and y + th <= field_fill.shape[0] and x + tw <= field_fill.shape[1]:
-            np.maximum(field_fill[y:y+th, x:x+tw], template, out=field_fill[y:y+th, x:x+tw])
+        xs = sorted(x for x, _ in grp)
+        d = np.diff(xs)
+        per_row.append((float(np.median([gy for _, gy in grp])), xs[0],
+                        float(np.median(d)) if len(d) and np.median(d) >= tw * .8 else tw * 1.05))
+    per_row.sort()
     field *= valid
-    field_fill *= valid
-    coverage_real = cv2.GaussianBlur(cv2.warpAffine(field, cv2.invertAffineTransform(matrix), (w,h)), (0, 0), 1.2)
-    coverage = cv2.GaussianBlur(cv2.warpAffine(np.maximum(field, field_fill),
-                                               cv2.invertAffineTransform(matrix), (w,h)), (0, 0), 1.2)
+    # 纸面直填（尾部单章路）不做逐像素验证，它的风险就是模板占位本身：
+    # 必须用未并晶格的保守占位（实测白底小字页被晶格撑爆多选 49 万px）。
+    coverage_peaks = cv2.GaussianBlur(cv2.warpAffine(field, cv2.invertAffineTransform(matrix), (w,h)), (0, 0), 1.2)
+    region_tail = cv2.dilate((coverage_peaks > .03).astype(np.uint8), np.ones((7,7), np.uint8)) > 0
+    if len(per_row) >= 2:
+        fh, fw = field.shape
+        # 真实行距可交替不均（实测奇偶行差 6-8px）：检测行用真实行心，
+        # 端部外侧按最近行距外推，不设档位限制。
+        lines = list(per_row)
+        top_gap = per_row[1][0] - per_row[0][0]
+        y = per_row[0][0] - top_gap
+        while y > -th:
+            lines.append((y, per_row[0][1], per_row[0][2]))
+            y -= top_gap
+        bot_gap = per_row[-1][0] - per_row[-2][0]
+        y = per_row[-1][0] + bot_gap
+        while y < fh:
+            lines.append((y, per_row[-1][1], per_row[-1][2]))
+            y += bot_gap
+        lattice = np.zeros_like(field)
+        tf32 = cv2.dilate(template, np.ones((3, 3), np.uint8)).astype(np.float32)
+        row_scores = cv2.matchTemplate(feature, template.astype(np.float32),
+                                       cv2.TM_CCOEFF_NORMED)
+        sh = row_scores.shape[0]
+
+        def _stamp_at(xi, yi):
+            xs0, ys0 = max(0, xi), max(0, yi)
+            sx0, sy0 = xs0 - xi, ys0 - yi
+            hh = min(th - sy0, fh - ys0)
+            ww = min(tw - sx0, fw - xs0)
+            if hh > 0 and ww > 0:
+                np.maximum(lattice[ys0:ys0 + hh, xs0:xs0 + ww],
+                           tf32[sy0:sy0 + hh, sx0:sx0 + ww],
+                           out=lattice[ys0:ys0 + hh, xs0:xs0 + ww])
+
+        for y_line, x0_row, step_x in lines:
+            yi = int(round(y_line))
+            sy0 = max(0, min(sh - 1, yi - 12))
+            sy1 = max(0, min(sh, yi + 13))
+            if sy1 <= sy0:
+                continue
+            band = row_scores[sy0:sy1]
+            prof = band.max(0)
+            cand = np.flatnonzero(prof >= 0.30)
+            order = cand[np.argsort(prof[cand])[::-1]] if len(cand) else []
+            taken = []
+            for c in order:
+                if all(abs(int(c) - t) > step_x * .5 for t in taken):
+                    taken.append(int(c))
+            for c in taken:
+                _stamp_at(c, sy0 + int(np.argmax(band[:, c])))
+            j_lo = int(np.floor((0 - x0_row) / step_x)) - 1
+            j_hi = int(np.ceil((fw - x0_row) / step_x)) + 1
+            for j in range(j_lo, j_hi + 1):
+                xi = int(round(x0_row + j * step_x))
+                if xi + tw < 0 or xi > fw:
+                    continue
+                if all(abs(xi - t) > step_x * .5 for t in taken):
+                    _stamp_at(xi, yi)
+        field = np.maximum(field, lattice)
+        field *= valid
+    coverage = cv2.GaussianBlur(cv2.warpAffine(field, cv2.invertAffineTransform(matrix), (w,h)), (0, 0), 1.2)
     # Soft coverage keeps antialiased stroke edges inside the invertible fit:
     # a hard binary template zeroes alpha exactly where the veil feathers out,
     # which shows up as residual watermark at the glyph rims. 印章模板只抓住笔画
     # 深色核心，真实抗锯齿晕圈在模板外约 1–2px；把选区再外扩 1px（总计约
     # 3px），让纸面直填覆盖整条晕圈，避免清完内部后留下空心轮廓。
-    # 页边裁切实例的硬边晕圈可达 4–6px（实测边缘漏选 46% 在章旁 6px 内），
-    # 但全页加宽膨胀会顶破 region 占比闸门 .15（晕圈环带面积随笔画周长放大）；
-    # 只对页边 80px 带用 5px 膨胀，内部维持 3px。
-    _band = np.zeros(coverage.shape, bool)
-    _band[:80] = True; _band[-80:] = True; _band[:, :80] = True; _band[:, -80:] = True
-
-    def _region_of(cov, wide_band):
-        c = (cov > .03).astype(np.uint8)
-        r = cv2.dilate(c, np.ones((7,7), np.uint8)) > 0
-        if wide_band:
-            r |= (cv2.dilate(c, np.ones((11,11), np.uint8)) > 0) & _band
-        return r
-    # 预算感知：小字密页笔画周长大，补章+页边加宽膨胀会把占比顶过 .15 闸门
-    # （白底 s010 实测老路整场退场、落到更差路径）。先撤页边加宽，再整场撤
-    # 补章，都装不下才拒——闸门是硬约束，补章是增益，增益让位于约束。
-    region = _region_of(coverage, True)
-    if not .0001 < region.mean() < .15:
-        region = _region_of(coverage, False)
-    if not .0001 < region.mean() < .15:
-        coverage = coverage_real
-        region = _region_of(coverage, False)
-    if not .0001 < region.mean() < .15:
+    region = cv2.dilate((coverage > .03).astype(np.uint8), np.ones((7,7), np.uint8)) > 0
+    # 预闸门只防失控：晶格全铺的"提问音量"可达 16%（小字密页实测），真正的
+    # 占比闸门卡在验证后的实际声称面积（见下方 fitted 检查，同一 .15 红线）。
+    if not .0001 < region.mean() < .25:
         return None
     samples = img[region & (gray>50)]
     if len(samples) < 50:
@@ -315,11 +317,18 @@ def estimate(img):
                                         allow_broad_ink=True, coverage_hint=coverage,
                                         keepout_hint=keepout if _upright >= 2 else None)
     if fitted is not None:
+        # 占比闸门卡在验证后的实际声称面积（原 region 预闸门的正确位置）：
+        # 晶格全铺会把“提问”铺到 16%，但验证后声称才是真实风险（实测 4-6%）。
+        if (fitted.alpha >= .08).mean() >= .15:
+            return None
         fitted.method = 'paper_repeat_document_overlay'
         return fitted
     # This path handles neutral lettering only. Coloured stamps have their own
     # measured matting path and must retain it.
-    eligible = region & (gray>50) & (gray<245)
+    # 无逐像素验证的纸面直填：占位闸门维持旧红线 .15（晶格全铺不适用此路）。
+    if not .0001 < region_tail.mean() < .15:
+        return None
+    eligible = region_tail & (gray>50) & (gray<245)
     if keepout is not None and np.count_nonzero(eligible & ~keepout)>50:
         eligible &= ~keepout
     bins = np.arange(0,258,2)
@@ -332,10 +341,10 @@ def estimate(img):
     if color.max()-color.min() > 12:
         return None
     paper = np.percentile(img.reshape(-1,3),97,axis=0).astype(np.float32)
-    return MaskLayer(alpha=region.astype(np.float32),source=MaskSource.PRIOR,
+    return MaskLayer(alpha=region_tail.astype(np.float32),source=MaskSource.PRIOR,
         confidence=float(np.median([p[2] for p in peaks])),
         veil_strength=np.zeros(3,np.float32),veil_offset=color,
-        paper=np.broadcast_to(paper,img.shape).copy(),footprint=region,
+        paper=np.broadcast_to(paper,img.shape).copy(),footprint=region_tail,
         method='single_repeated_paper',repair_mode='paper_repeat_cleanup',text_keepout=keepout)
 
 

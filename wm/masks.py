@@ -523,14 +523,17 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
             if located is not None and located.repair_mode in ('document_overlay', 'document_overlay_full'):
                 located.instances = _instances(located.alpha, thr)
                 return located
+        # 已有检测结果（如斜排文字路）优先于纸面直填尾部：尾部不做逐像素验证，
+        # 基线 30 张无一样本由它产出，实测它在白底小字页会抢路由且精确率减半
+        # （s010 0.619→0.254）。它只应在其他路全部无果时兜底。
+        if located is not None:
+            located.instances = _instances(located.alpha, thr)
+            return located
         if wanted("paper_repeat"):
             paper = paper_repeat.estimate(img)
             if paper is not None:
                 paper.instances = _instances(paper.alpha, thr)
                 return paper
-        if located is not None:
-            located.instances = _instances(located.alpha, thr)
-            return located
         if wanted("document_overlay"):
             from . import document_overlay
             located = document_overlay.estimate(img, keepout=keepout)
