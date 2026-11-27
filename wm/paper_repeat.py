@@ -5,6 +5,7 @@ Only confirmed strokes on paper are filled. Dark print, coloured ink and table
 rules are preserved rather than handed to a generative repair model.
 """
 from __future__ import annotations
+import difflib
 import warnings
 import cv2
 import numpy as np
@@ -105,6 +106,26 @@ def _fit_row_slope(line_peaks_xy):
     return s, {li: float(sol[rk]) for rk, (li, _) in enumerate(rows)}
 
 
+def repeated_line_evidence(observations, minimum: int = 4) -> bool:
+    """≥minimum 条近乎相同的整行长文本（≥5 字符）= 平铺水印签名。
+
+    供路由在日期染色小行等早抢路径前判断（角度组 s002：水平水印行含日期，
+    被 ocr_seed_stain 截胡）。纯文本判断，不做图像计算，代价可忽略。
+    """
+    groups = []
+    for box, text, confidence in observations or []:
+        height, length, _tilt = ocr._geometry(box)
+        if confidence >= .65 and len(text) >= 5 and length > 3 * height:
+            norm = ''.join(text.split())
+            for grp in groups:
+                if difflib.SequenceMatcher(None, norm, grp[0]).ratio() >= .8:
+                    grp[1] += 1
+                    break
+            else:
+                groups.append([norm, 1])
+    return any(g[1] >= minimum for g in groups)
+
+
 def table_rules(img):
     gray = img.astype(np.float32).mean(2)
     length = max(25, min(100, min(gray.shape)//12))
@@ -125,16 +146,42 @@ def estimate(img):
     observations = ocr.read_lines(img)
     img_lines = observations or []  # 原图 OCR 行留底，后面直立正文判别复用，不重复调用
     angles = []
+    horiz = []
+    wm_boxes = []   # 原图坐标下的水印行框：后面从 keepout 里减掉
     upright_body = False
     for box, text, confidence in observations or []:
         height, length, tilt = ocr._geometry(box)
         upright_body |= confidence>=.65 and len(text)>=4 and tilt<10
         v = box[1]-box[0]
         angle = float(np.degrees(np.arctan2(v[1], v[0])))
-        if confidence >= .65 and len(text) >= 5 and length > 3*height and 15 < abs(angle) < 60:
-            angles.append(angle)
+        if confidence >= .65 and len(text) >= 5 and length > 3*height:
+            # 斜窗口下限 10°（原 15°，角度组 s000 实测 -15.0° 死在边界）：
+            # 直立正文判别用 ≤2.5°、扫描微斜 <8°，10° 保持安全距离。
+            if 10 < abs(angle) < 60:
+                angles.append(angle)
+                wm_boxes.append((angle, box))
+            elif abs(angle) <= 10:
+                horiz.append((angle, text, box))
     if not angles:
-        return None
+        # 水平/近水平重复水印（2026-11-27 角度组 s002）：与直立正文同角度，
+        # 判别靠「同一字符串整行重复 ≥4 次」——正文行内容各不相同，表格短
+        # 标签过不了 len≥5，页眉页脚页码逐页变化。下游晶格拟合、逐像素验证、
+        # 占比闸门与斜向路径完全一致，不降低任何保护。
+        groups = []
+        for ang, text, box in horiz:
+            norm = ''.join(text.split())
+            for grp in groups:
+                if difflib.SequenceMatcher(None, norm, grp[0]).ratio() >= .8:
+                    grp[1].append(ang)
+                    grp[2].append((ang, box))
+                    break
+            else:
+                groups.append([norm, [ang], [(ang, box)]])
+        best = max(groups, key=lambda g: len(g[1]), default=None)
+        if best is None or len(best[1]) < 4:
+            return None
+        angles = best[1]
+        wm_boxes = best[2]
     angle = float(np.median(angles))
     h, w = gray.shape
     matrix = cv2.getRotationMatrix2D((w/2, h/2), angle, 1)
@@ -168,6 +215,21 @@ def estimate(img):
     # Estimate the repeated letter tone from OCR candidates and suppress darker
     # foreground for localization only; source pixels are never preprocessed.
     keepout = ocr.text_zones(img)
+    if keepout is not None and wm_boxes and keepout.any():
+        # keepout 本应只装正文，但 ≤15° 的水印行也会被 text_zones 当正文
+        # （角度组 s000/s002 实测：keepout 墨 26-32% 全是水印自己，正文墨池
+        # 为 0，双极拟合必死）。只剔 ≤15° 的水印行（更斜的本来就不在
+        # text_zones 里，剔了会扰动文档底小字页的拟合，实测 s009/s010 召回
+        # -0.1pp）；拷贝后再改不污染 OCR 缓存。
+        keepout = keepout.copy()
+        _kh, _kw = keepout.shape
+        for _ang, _box in wm_boxes:
+            if abs(_ang) > 15:
+                continue
+            _lo = np.maximum(np.floor(_box.min(0)).astype(int) - 4, 0)
+            _hi = np.minimum(np.ceil(_box.max(0)).astype(int) + 4, [_kw, _kh])
+            if _hi[0] > _lo[0] and _hi[1] > _lo[1]:
+                keepout[_lo[1]:_hi[1], _lo[0]:_hi[0]] = False
     rotated_keepout = np.zeros(g.shape,bool) if keepout is None else cv2.warpAffine(
         keepout.astype(np.uint8),matrix,(rw,rh),flags=cv2.INTER_NEAREST)>0
     tones=[]
@@ -279,7 +341,7 @@ def estimate(img):
             for x,y,_ in ep:
                 np.maximum(extra[y:y+eh,x:x+ew],part,out=extra[y:y+eh,x:x+ew])
         np.maximum(field[th:th+rh,tw:tw+rw],extra,out=field[th:th+rh,tw:tw+rw])
-    keepout = ocr.text_zones(img)
+    # keepout 已在取色阶段剔过水印行并缓存于局部变量，直接复用
     # 直立正文行 ≥2 才把 keepout 接进反解（有正文页字上水印靠它保护）；
     # 白底页的水印行会被 OCR 误当正文（tilt≤15° 的口径太宽），接进去会把
     # 晕圈 alpha 归零、召回实测掉 0.6pp——无直立正文时传 None，由反解内部
@@ -465,6 +527,7 @@ def estimate(img):
     fitted = repeated._document_overlay(img, region, profile,
                                         float(np.median([p[2] for p in peaks])),
                                         allow_broad_ink=True, coverage_hint=coverage,
+                                        allow_single_pole=True,
                                         keepout_hint=keepout if _upright >= 2 else None)
     if fitted is not None:
         # 占比闸门卡在验证后的实际声称面积（原 region 预闸门的正确位置）：

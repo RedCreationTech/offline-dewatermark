@@ -443,6 +443,20 @@ def _estimate_single_page(img: np.ndarray, thr: Thresholds = Thresholds(),
             located = observed_text.repeated_photo(img, observations)
         if located is None and (wanted("document_overlay") or wanted("chromatic")):
             located = observed_text.shadow_paper(img, observations)
+        if located is None and wanted("paper_repeat"):
+            # 水平重复水印会被 ocr_seed_stain 截胡（水印文案含日期，角度组
+            # s002 实测路由被抢、页内整片漏选）：「≥4 条近乎相同的整行长文本
+            # ＋≥2 条直立行」是水印签名，让 paper_repeat 先试试；日期章页面
+            # 只有一条日期行，不满足签名，走原顺序不变。白底斜字页无直立行，
+            # 也不受影响。
+            from . import paper_repeat as _paper_rep
+            _up = 0
+            for _box, _t, _c in observations:
+                _h, _l, _tilt = ocr._geometry(_box)
+                if _tilt <= 2.5 and _l >= 3 * _h:
+                    _up += 1
+            if _up >= 2 and _paper_rep.repeated_line_evidence(observations):
+                located = _paper_rep.estimate(img)
         if located is None and thr.experimental_ocr_line_seed:
             # OCR-read date/time-like lines on paper pages (date stamps): the
             # box is search scope only, the mask comes from measured stain

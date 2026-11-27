@@ -133,6 +133,37 @@ class LatticeFitTests(unittest.TestCase):
         self.assertIsNone(paper_repeat._fit_row_slope(chaos))
 
 
+class RepeatedLineEvidenceTests(unittest.TestCase):
+    """路由前置签名：≥4 条近乎相同的整行长文本 = 平铺水印（角度组 s002）。"""
+
+    def _line(self, text, conf=0.9):
+        box = np.array([[0, 0], [400, 0], [400, 40], [0, 40]], np.float32)
+        return (box, text, conf)
+
+    def test_tiled_watermark_signature(self):
+        obs = [self._line("内部资料 08812 2026-11-10") for _ in range(5)]
+        self.assertTrue(paper_repeat.repeated_line_evidence(obs))
+
+    def test_ocr_noise_tolerated(self):
+        texts = ["内部资料 08812 2026-11-10", "内部资料08812 2026-11-10",
+                 "内部资料 08812 2026-11-1O", "内部资料 08812 2026-11-10",
+                 "内部资料 08812 2026-11-18"]
+        self.assertTrue(paper_repeat.repeated_line_evidence([self._line(t) for t in texts]))
+
+    def test_body_text_not_signature(self):
+        obs = [self._line(t) for t in
+               ["下午请假，今天新增两个新开的bug", "接口未完成会影响开发进度",
+                "页面窗口选择画面弹窗已完成", "性能优化问题排期预计下周",
+                "趋势控件中的标尺编号确认完毕"]]
+        self.assertFalse(paper_repeat.repeated_line_evidence(obs))
+
+    def test_single_date_stamp_not_signature(self):
+        obs = [self._line("2026-11-10 19:03:23")] + [
+            self._line(t) for t in ["正文第一行内容不一样", "正文第二行内容也不同",
+                                    "正文第三行各不相同哦", "正文第四行字数够长了"]]
+        self.assertFalse(paper_repeat.repeated_line_evidence(obs))
+
+
 class TableRuleTests(unittest.TestCase):
     def test_uncertain_overlay_fit_does_not_whiten_a_continuous_table_rule(self):
         from wm.contract import MaskLayer

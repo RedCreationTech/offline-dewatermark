@@ -46,8 +46,14 @@ RESOLUTION_LEVELS = [("base", None, "基准200dpi·1654×2338", "分辨率基准
 # 间距组：只变行距（垂直间距），字距 COL_MULT 不动；透明度/颜色/字号固定基准档。
 SPACING_LEVELS = [("dense", 0.6, "密排·行距×0.6", "密排"),
                   ("sparse", 1.5, "疏排·行距×1.5", "疏排")]
+# 角度组：只变平铺角度（基准 -35° 已在其他批次覆盖，这里不重复）。
+# 0° 故意入选：水平水印行可能触发直立正文判别，路由走向值得暴露。
+ANGLE_LEVELS = [("tilt15", -15.0, "缓斜-15°", "缓斜15"),
+                ("tilt55", -55.0, "陡斜-55°", "陡斜55"),
+                ("horizontal", 0.0, "水平0°", "水平0"),
+                ("pos25", 25.0, "反向+25°", "反向25")]
 GROUP_LABEL = {"opacity": "透明度组", "color": "颜色组", "size": "尺寸组", "bg": "底图组",
-               "resolution": "分辨率组", "spacing": "间距组"}
+               "resolution": "分辨率组", "spacing": "间距组", "angle": "角度组"}
 BG_LABEL = {"white": "纯白纸", "photo": "照片", "document": "文档"}
 # 样本 id 里的底图前缀（白底不加前缀，保持历史批次 id 不变、不撞名）
 BG_SHORT = {"white": "", "photo": "照片底_", "document": "文档底_"}
@@ -55,7 +61,8 @@ BASE = {"bg": "white", "strength": BASE_STRENGTH, "color": "gray", "size": 1.0}
 
 
 def oblique_alpha(shape, px: int, dpi: int = 200,
-                  row_mult_scale: float = 1.0) -> tuple[np.ndarray, dict]:
+                  row_mult_scale: float = 1.0,
+                  angle_deg: float = ANGLE_DEG) -> tuple[np.ndarray, dict]:
     """按真实平铺写法生成覆盖图：铺满对角平面 → 旋转 → 裁回页面。"""
     h, w = shape[:2]
     scale = dpi / 200.0
@@ -74,11 +81,11 @@ def oblique_alpha(shape, px: int, dpi: int = 200,
         row += 1
         for tx in range(-int(tw) - sx + off, 2 * diag, sx):
             draw.text((tx, ty), TEXT, fill=255, font=font)
-    layer = layer.rotate(ANGLE_DEG, resample=Image.BICUBIC, expand=False)
+    layer = layer.rotate(angle_deg, resample=Image.BICUBIC, expand=False)
     x0, y0 = (diag - w) // 2, (diag - h) // 2
     alpha = np.asarray(layer, dtype=np.uint8)[y0:y0 + h, x0:x0 + w]
     params = dict(font_px=px, text_width_px=round(tw), spacing_x_px=sx,
-                  spacing_y_px=sy, angle_deg=ANGLE_DEG, stagger=STAGGER,
+                  spacing_y_px=sy, angle_deg=angle_deg, stagger=STAGGER,
                   row_mult_scale=row_mult_scale)
     return alpha.astype(np.float32) / 255.0, params
 
@@ -137,6 +144,9 @@ def plan(only: list[str], bgs: list[str], levels: list[str] | None = None) -> li
     if "spacing" in only:
         for key, mult, cell, name in SPACING_LEVELS:
             push("spacing", key, name, cell, row_mult=mult)
+    if "angle" in only:
+        for key, deg, cell, name in ANGLE_LEVELS:
+            push("angle", key, name, cell, angle=deg)
     if not cells:
         raise SystemExit(f"--only 里没有可生成的组：{only}")
     return cells
@@ -167,7 +177,8 @@ def prepare_dataset(args: argparse.Namespace) -> None:
         dpi = float(level["dpi"])
         base_path, base = bases[(level["bg"], dpi)]
         alpha, params = oblique_alpha(base.shape, BASE_PX * level["size"], dpi,
-                                      row_mult_scale=float(level.get("row_mult", 1.0)))
+                                      row_mult_scale=float(level.get("row_mult", 1.0)),
+                                      angle_deg=float(level.get("angle", ANGLE_DEG)))
         rgb = np.array(COLOR_RGB[level["color"]], dtype=np.float64)
         strength = float(np.clip(level["strength"], 0.02, 0.95))
         watermarked = apply_watermark(base, alpha, rgb, strength)
@@ -384,7 +395,7 @@ def main() -> int:
     generator.add_argument('--base-dir', type=Path, default=ROOT / 'out/分层测试集_v1/参考',
                            help='复用干净底图的目录（按 底图_宽x高 匹配），找不到时在本轮渲染')
     generator.add_argument('--only', nargs='+', default=['opacity', 'color', 'size'],
-                           choices=['opacity', 'color', 'size', 'bg', 'resolution', 'spacing'])
+                           choices=['opacity', 'color', 'size', 'bg', 'resolution', 'spacing', 'angle'])
     generator.add_argument('--levels', nargs='+', help='只生成指定档位键')
     generator.add_argument('--bgs', nargs='+', default=['white'], choices=BG_TYPES)
     generator.add_argument('--base-bg', default='white', choices=BG_TYPES,
